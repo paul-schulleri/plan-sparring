@@ -54,6 +54,9 @@ if [ -n "$prev_sha" ] && [ "$prev_sha" = "$(ps_sha "$dir/plan.md")" ]; then
 fi
 
 round=$(( $(ps_num "$prev_round") + 1 ))
+# Written by the hook. Empty when the runner is started by hand, which reads as "spar" below -
+# the more informative of the two, and wrong in no way the user can act on.
+route=$(cat "$dir/route" 2>/dev/null || true)
 thread=$(cat "$dir/thread" 2>/dev/null || true)
 
 # resume runs in the CURRENT directory, so later rounds must start where round 1 did.
@@ -129,13 +132,20 @@ prev_points=$(ps_num "$prev_points")
 sent="sent   draft, $(ps_lines "$snap") lines"
 if [ "$round" -gt 1 ]; then
   d=$(ps_delta "$prev" "$snap") && sent="$sent ($d since round $((round - 1)))" || sent="$sent (delta unavailable)"
-  [ "$prev_points" -gt 0 ] 2>/dev/null && sent="$sent
+  # Only after objections. When the previous round AGREED, the headlines are what the reviewer
+  # says it checked, and calling those "previously highlighted points" invents open work.
+  [ "$prev_points" -gt 0 ] && [ "$prev_outcome" != agreed ] && sent="$sent
        rechecking $prev_points previously highlighted point(s)"
 fi
 
+# There is no round 2 on the pass route, so do not print a budget the user cannot spend.
+case "$route" in
+  pass) where="single review pass" ;;
+  *)    where="round $round/$PS_MAX_ROUNDS" ;;
+esac
 digest() {   # $1 = the "back" block, $2 = the "next" line
   printf '\n%s\n%s\n%s\nnext   %s\n' \
-    "plan-sparring · round $round/$PS_MAX_ROUNDS · $PS_BACKEND_NAME $PS_MODEL $PS_EFFORT" \
+    "plan-sparring · $where · $PS_BACKEND_NAME $PS_MODEL $PS_EFFORT" \
     "$sent" "$1" "$2"
 }
 # Failures used to print nothing but an error, which is exactly when the transcript went dark.
@@ -178,7 +188,6 @@ esac
 [ -n "$thread" ] || { thread=$(grep -oE 'session id: [0-9a-fA-F-]{8,}' "$log" 2>/dev/null | tail -1 | awk '{print $3}'); printf '%s' "$thread" > "$dir/thread"; }
 
 points=$(ps_headlines "$out")
-n_points=$(printf '%s' "$points" | awk 'NF' | wc -l | tr -d ' ')
 
 if ! { jq -n --arg e "$epoch_before" --arg b "$PS_BACKEND_NAME" --arg m "$PS_MODEL" \
         --argjson r "$round" --arg ih "$sha_before" --arg o "$outcome" \
@@ -192,16 +201,23 @@ fi
 echo 0 > "$dir/fails"
 [ -n "${PLAN_SPARRING_KEEP:-}" ] || rm -f "$dir/plan-$((round - 2)).md" 2>/dev/null
 
+# On the pass route the next ExitPlanMode opens the gate: nothing is handed over, so do not
+# promise a revision round that will not happen.
+if [ "$route" = pass ]; then
+  nxt="work them into the plan, then call ExitPlanMode - the gate opens from there"
+else
+  nxt="work them into the plan, then call ExitPlanMode to hand the revision over"
+fi
 if [ "$outcome" = agreed ]; then
   back="back   AGREED"; nxt="call ExitPlanMode - it opens for this plan as it stands"
+elif [ -n "$points" ]; then
+  back="back   OBJECTIONS — $(printf '%s\n' "$points" | grep -c .) highlighted point(s)"
 else
-  back="back   OBJECTIONS — ${n_points:-0} highlighted point(s)"
-  nxt="work them into the plan, then call ExitPlanMode to hand the revision over"
+  # No count here: "0 highlighted point(s)" alongside a denial reads as "nothing to fix".
+  back="back   OBJECTIONS — summary unavailable, see the full review below"
 fi
 [ -n "$points" ] && back="$back
 $(printf '%s\n' "$points" | sed 's/^/       - /')"
-[ -n "$points" ] || back="$back
-       summary unavailable — see the full review below"
 digest "$back" "$nxt"
 echo
 echo "Relay the block above to the user as your status update, in the language of the conversation."

@@ -162,9 +162,11 @@ Read these before you rely on it.
 bash tests/run.sh
 ```
 
-74 assertions against a fake backend: no network, no auth, no rate limit. They cover the route
+119 assertions against a fake backend: no network, no auth, no rate limit. They cover the route
 provenance, epoch binding, plan-hash binding, verdict parsing, the failure escape, the timeout,
-and a transcript that has been truncated underneath a running round.
+a transcript that has been truncated underneath a running round, and every shape of receipt the
+gate must refuse to trust - a round that is not a whole number, a control character smuggled into
+a field, valid JSON with garbage after it.
 
 ## Uninstall
 

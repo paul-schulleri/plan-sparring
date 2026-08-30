@@ -19,7 +19,7 @@ payload=$(cat)
 # state, so it says so instead of waving the plan through. UserPromptSubmit stays silent.
 if ! command -v jq >/dev/null 2>&1; then
   case "$payload" in
-    *'"PreToolUse"'*) printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"plan-sparring needs jq and it is not on PATH, so it cannot tell whether this plan was reviewed. Install jq, or set PLAN_SPARRING_OFF=1 to disable the plugin, then call ExitPlanMode again."}}' ;;
+    *'"PreToolUse"'*) printf '%s\n' '{"systemMessage":"plan-sparring · jq missing, cannot verify","hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"plan-sparring needs jq and it is not on PATH, so it cannot tell whether this plan was reviewed. Install jq, or set PLAN_SPARRING_OFF=1 to disable the plugin, then call ExitPlanMode again."}}' ;;
   esac
   exit 0
 fi
@@ -132,6 +132,9 @@ PreToolUse)
   pf=$(printf '%s' "$payload" | jq -r '.tool_input.planFilePath // empty' 2>/dev/null)
   [ -n "$pf" ] && printf '%s' "$pf" > "$dir/planfile"
   [ -s "$dir/plan.md" ] || { [ -s "$pf" ] && cp "$pf" "$dir/plan.md" 2>/dev/null; }
+  # The runner has no other way to know which route it is on, and "round 1/3" is a lie on a
+  # one-pass route. Rewritten every time, so switching route mid-epoch heals itself.
+  printf '%s' "$route" > "$dir/route" 2>/dev/null
 
   if ! command -v "$PS_BACKEND_BIN" >/dev/null 2>&1; then
     deny "plan-sparring · $PS_BACKEND_BIN not found on PATH" "This plan is on the \"$route\" route, but the \"$PS_BACKEND_BIN\" CLI is not on PATH, so no review can be produced. $(ask_route "Sparring unavailable") Picking \"$PS_LABEL_DIRECT\" switches this plan to the unreviewed route."
@@ -171,7 +174,11 @@ PreToolUse)
 
   if [ -f "$dir/receipt.json" ]; then
     # after a revision the points are not "open" - they have not been looked at again yet
-    st="plan-sparring · round $((rounds + 1))/$PS_MAX_ROUNDS · $pts point(s) pending recheck"
+    [ "$route" = "spar" ] && where="round $((rounds + 1))/$PS_MAX_ROUNDS" || where="round $((rounds + 1))"
+    # pts is 0 when the reviewer sent no summary block; claiming "0 point(s)" would read as
+    # "nothing to fix" while the gate is denying because of them.
+    [ "$pts" -gt 0 ] && st="plan-sparring · $where · $pts point(s) pending recheck" \
+                     || st="plan-sparring · $where · objections pending recheck"
   else
     st="plan-sparring · handing the draft to $PS_BACKEND_NAME"
   fi

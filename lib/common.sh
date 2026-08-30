@@ -144,11 +144,30 @@ ps_delta() {
 
 # Up to five one-line points from the reviewer's SUMMARY block, control characters stripped and
 # each line bounded. No block, or an unparseable one, prints nothing - the review still counts.
+# The markers are anchored to a whole line: unanchored, a reviewer that names them in prose
+# ("I'll put the points between SUMMARY BEGIN and SUMMARY END") opened and closed the block on
+# that one line and the real summary below it was never read.
 ps_headlines() {
   [ -s "$1" ] || return 1
-  awk '/SUMMARY BEGIN/{h=1;next} /SUMMARY END/{exit} h{print}' "$1" 2>/dev/null \
-    | sed -e 's/^[[:space:]]*[-*][[:space:]]*//' -e 's/[[:cntrl:]]//g' -e 's/[[:space:]]*$//' \
-    | awk 'NF' | head -5 | cut -c1-110
+  awk '
+    /^[[:space:]]*SUMMARY BEGIN[[:space:]]*$/ { inblock = 1; next }
+    inblock && /^[[:space:]]*SUMMARY END[[:space:]]*$/ { exit }
+    !inblock { next }
+    { gsub(/[[:cntrl:]]/, ""); sub(/^[[:space:]]*[-*][[:space:]]*/, ""); sub(/[[:space:]]+$/, "") }
+    !length { next }
+    # Never end inside a character. Under a byte-counting awk (LC_CTYPE=C, the usual case here)
+    # a plain cut lands mid-sequence and the digest shows a replacement character, so the
+    # trailing continuation bytes go first and then a lead byte left dangling. Costs at most one
+    # whole character; a UTF-8-aware awk counts characters and neither sub matches.
+    length > 110 {
+      $0 = substr($0, 1, 110)
+      sub(/[\200-\277]*$/, "", $0); sub(/[\300-\377]$/, "", $0)
+      $0 = $0 "…"
+    }
+    { print; if (++n == 5) exit }
+  ' "$1" 2>/dev/null
 }
 
-ps_lines() { wc -l < "$1" 2>/dev/null | tr -d ' '; }
+# The redirect has to come after 2>/dev/null: the other way round, a missing file makes the shell
+# report the failed redirect on the real stderr and the suppression does nothing.
+ps_lines() { wc -l 2>/dev/null < "$1" | tr -d ' '; }

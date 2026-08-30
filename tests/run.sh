@@ -340,6 +340,74 @@ has "absent fields do not shift the ones that are there" "$(printf '%s' "$o" | r
 o=$(ups sY plan "" | bash "$HOOK")
 has "plan mode with no transcript path still arms" "$o" "$PS_QUESTION"
 
+echo "== the digest tells the truth =="
+# The pass route has exactly one round, so a budget in the header is a promise nobody can keep.
+TP2="$TMPDIR/tp2.jsonl"; : > "$TP2"; ups sZ plan "$TP2" | bash "$HOOK" >/dev/null
+DZ=$(ps_epoch_dir sZ); answer "$PS_LABEL_PASS" >> "$TP2"
+gate sZ "$TP2" "plan z" | bash "$HOOK" >/dev/null
+check "the hook records the route for the runner" "$(cat "$DZ/route" 2>/dev/null)" "pass"
+o=$(FAKE_MODE=objections bash "$RUNNER" --epoch "$DZ" 2>/dev/null)
+has  "pass route says one pass"        "$o" "single review pass"
+hasnt "and quotes no round budget"     "$o" "/$PS_MAX_ROUNDS"
+hasnt "and promises no revision round" "$o" "hand the revision over"
+has  "it points at the gate instead"   "$o" "the gate opens from there"
+
+TS2="$TMPDIR/ts2.jsonl"; : > "$TS2"; ups sW plan "$TS2" | bash "$HOOK" >/dev/null
+DW=$(ps_epoch_dir sW); answer "$PS_LABEL_SPAR" >> "$TS2"
+gate sW "$TS2" "plan w" | bash "$HOOK" >/dev/null
+o=$(FAKE_MODE=objections bash "$RUNNER" --epoch "$DW" 2>/dev/null)
+has "spar route still shows the budget" "$o" "round 1/$PS_MAX_ROUNDS"
+# The direct route writes nothing of the plan to disk - the route file is no exception.
+TD2="$TMPDIR/td2.jsonl"; : > "$TD2"; ups sDR plan "$TD2" | bash "$HOOK" >/dev/null
+DV2=$(ps_epoch_dir sDR); answer "$PS_LABEL_DIRECT" >> "$TD2"
+gate sDR "$TD2" "secret" | bash "$HOOK" >/dev/null
+[ -f "$DV2/route" ] && bad "direct route writes no route file" || ok "direct route writes no route file"
+
+# A review with objections but no summary block must not report zero open points: read plainly,
+# "0 highlighted point(s)" says there is nothing to do while the gate is still denying.
+TU="$TMPDIR/tu.jsonl"; : > "$TU"; ups sU plan "$TU" | bash "$HOOK" >/dev/null
+DU=$(ps_epoch_dir sU); answer "$PS_LABEL_SPAR" >> "$TU"
+gate sU "$TU" "plan u" | bash "$HOOK" >/dev/null
+o=$(FAKE_MODE=nosummary bash "$RUNNER" --epoch "$DU" 2>/dev/null)
+has  "no summary block says so"     "$o" "summary unavailable"
+hasnt "and counts nothing"          "$o" "0 highlighted"
+o=$(gate sU "$TU" "plan u revised" | bash "$HOOK")
+hasnt "nor does the next gate block" "$(printf '%s' "$o" | sysmsg)" "0 point(s)"
+has  "it says objections instead"    "$(printf '%s' "$o" | sysmsg)" "objections pending recheck"
+
+# Five is the cap, and the block ends at SUMMARY END - a bullet in the prose below is not a point.
+TA="$TMPDIR/ta.jsonl"; : > "$TA"; ups sA plan "$TA" | bash "$HOOK" >/dev/null
+DA2=$(ps_epoch_dir sA); answer "$PS_LABEL_SPAR" >> "$TA"
+gate sA "$TA" "plan a" | bash "$HOOK" >/dev/null
+FAKE_MODE=many bash "$RUNNER" --epoch "$DA2" >/dev/null 2>&1
+check "at most five headlines are kept" "$(jq -r '.headlines | length' "$DA2/receipt.json")" "5"
+hasnt "detail below SUMMARY END is not a headline" "$(jq -r '.headlines[]' "$DA2/receipt.json")" "with a bullet"
+
+# Naming the markers in prose used to swallow the whole block.
+gate sA "$TA" "plan a v2" | bash "$HOOK" >/dev/null
+FAKE_MODE=prosemarker bash "$RUNNER" --epoch "$DA2" >/dev/null 2>&1
+check "markers named in prose do not close the block" "$(jq -r '.headlines[0]' "$DA2/receipt.json")" "the real point"
+
+# cut -c counts bytes in this locale, so a long non-ASCII headline used to end mid-character.
+gate sA "$TA" "plan a v3" | bash "$HOOK" >/dev/null
+FAKE_MODE=longutf8 bash "$RUNNER" --epoch "$DA2" >/dev/null 2>&1
+hl=$(jq -r '.headlines[0]' "$DA2/receipt.json")
+hasnt "a truncated headline stays valid UTF-8" "$hl" "$(printf '\357\277\275')"
+case "$hl" in *…) ok "and is marked as truncated" ;; *) bad "and is marked as truncated" "got: $hl" ;; esac
+
+# After an agreement the headlines are what the reviewer checked, not open work.
+TB="$TMPDIR/tb.jsonl"; : > "$TB"; ups sB plan "$TB" | bash "$HOOK" >/dev/null
+DB2=$(ps_epoch_dir sB); answer "$PS_LABEL_SPAR" >> "$TB"
+gate sB "$TB" "plan b" | bash "$HOOK" >/dev/null
+FAKE_MODE=agreed bash "$RUNNER" --epoch "$DB2" >/dev/null 2>&1
+gate sB "$TB" "plan b changed" | bash "$HOOK" >/dev/null
+o=$(FAKE_MODE=objections bash "$RUNNER" --epoch "$DB2" 2>/dev/null)
+hasnt "an agreement leaves nothing to recheck" "$o" "rechecking"
+
+# ps_lines must not leak the shell's own redirect error when the snapshot is missing.
+e=$(ps_lines "$TMPDIR/definitely-not-here.md" 2>&1 >/dev/null)
+check "ps_lines is quiet about a missing file" "$e" ""
+
 echo "== exit codes =="
 for ev in UserPromptSubmit PreToolUse; do
   jq -nc --arg e "$ev" '{hook_event_name:$e,session_id:"s9"}' | bash "$HOOK" >/dev/null 2>&1
