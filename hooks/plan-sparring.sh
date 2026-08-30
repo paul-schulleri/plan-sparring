@@ -116,7 +116,14 @@ PreToolUse)
   [ -f "$dir/skip" ] && exit 0        # no backend was available when this round started
 
   off=$(cat "$dir/offset" 2>/dev/null || echo 0)
-  route=$(ps_route "$tp" "$off")
+  # Two answers out of one scan: which route, and how many times the user chose to keep sparring
+  # after the budget ran out. Line-based for the same reason the receipt is.
+  { read -r route; read -r more; } <<< "$(ps_route "$tp" "$off")"
+  budget=$(ps_budget "$more")
+  # The step inside ps_budget is local, and naming it here would be an unbound variable under
+  # set -u - in the MAIN shell, not a subshell, so the hook would die at the cap without ever
+  # emitting a decision. ps_budget 0 is that same sanitized number by definition.
+  step=$(ps_budget 0)
 
   [ -z "$route" ] && deny "plan-sparring · no route chosen yet" "No plan route has been chosen yet. $(ask_route "Plan route") Then act on the answer and call ExitPlanMode again."
   case "$route" in
@@ -135,9 +142,11 @@ PreToolUse)
   pf=$(printf '%s' "$payload" | jq -r '.tool_input.planFilePath // empty' 2>/dev/null)
   [ -n "$pf" ] && printf '%s' "$pf" > "$dir/planfile"
   [ -s "$dir/plan.md" ] || { [ -s "$pf" ] && cp "$pf" "$dir/plan.md" 2>/dev/null; }
-  # The runner has no other way to know which route it is on, and "round 1/3" is a lie on a
-  # one-pass route. Rewritten every time, so switching route mid-epoch heals itself.
+  # The runner has no other way to know which route it is on, nor how far the budget was
+  # extended, and "round 1/3" is a lie on a one-pass route - "round 4/3" is one after an
+  # extension. Rewritten every time, so switching route mid-epoch heals itself.
   printf '%s' "$route" > "$dir/route" 2>/dev/null
+  printf '%s' "$budget" > "$dir/cap" 2>/dev/null
 
   if ! command -v "$PS_BACKEND_BIN" >/dev/null 2>&1; then
     deny "plan-sparring · $PS_BACKEND_BIN not found on PATH" "This plan is on the \"$route\" route, but the \"$PS_BACKEND_BIN\" CLI is not on PATH, so no review can be produced. $(ask_route "Sparring unavailable") Picking \"$PS_LABEL_DIRECT\" switches this plan to the unreviewed route."
@@ -166,8 +175,10 @@ PreToolUse)
     fi
   fi
 
-  if [ "$route" = "spar" ] && [ "$rounds" -ge "$PS_MAX_ROUNDS" ] 2>/dev/null; then
-    deny "plan-sparring · $rounds rounds, no agreement · your call" "$PS_BACKEND_NAME has been round $rounds on this plan without agreeing, and an adversarial reviewer will keep finding something. Stop and ask the user how to proceed: one AskUserQuestion with the question \"$PS_QUESTION\" (header \"Rounds used up\") and these labels VERBATIM: \"$PS_LABEL_SPAR\" (keep going), \"$PS_LABEL_ACCEPT\" (present the plan as it stands, unreviewed objections and all), \"$PS_LABEL_DIRECT\". Name the rounds spent, roughly what each cost, and what the last round actually brought, in one or two lines first so they can decide."
+  # No 2>/dev/null any more: both operands are ps_num-clean, and the redirect used to hide
+  # `[ 3 -ge abc ]` failing on a typo'd PLAN_SPARRING_MAX_ROUNDS - which removed the cap entirely.
+  if [ "$route" = "spar" ] && [ "$rounds" -ge "$budget" ]; then
+    deny "plan-sparring · $rounds rounds, no agreement · your call" "$PS_BACKEND_NAME has been round $rounds on this plan without agreeing, and an adversarial reviewer will keep finding something. Stop and ask the user how to proceed: one AskUserQuestion with the question \"$PS_QUESTION\" (header \"Rounds used up\") and these labels VERBATIM: \"$PS_LABEL_MORE\" (another $step rounds before this question comes back), \"$PS_LABEL_ACCEPT\" (present the plan as it stands, unreviewed objections and all), \"$PS_LABEL_DIRECT\". Name the rounds spent, roughly what each cost, and what the last round actually brought, in one or two lines first so they can decide."
   fi
 
   fails=$(cat "$dir/fails" 2>/dev/null || echo 0)
@@ -177,7 +188,7 @@ PreToolUse)
 
   if [ -f "$dir/receipt.json" ]; then
     # after a revision the points are not "open" - they have not been looked at again yet
-    [ "$route" = "spar" ] && where="round $((rounds + 1))/$PS_MAX_ROUNDS" || where="round $((rounds + 1))"
+    [ "$route" = "spar" ] && where="round $((rounds + 1))/$budget" || where="round $((rounds + 1))"
     # pts is 0 when the reviewer sent no summary block; claiming "0 point(s)" would read as
     # "nothing to fix" while the gate is denying because of them.
     [ "$pts" -gt 0 ] && st="plan-sparring · $where · $pts point(s) pending recheck" \

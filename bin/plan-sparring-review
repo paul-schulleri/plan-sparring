@@ -142,10 +142,14 @@ if [ "$round" -gt 1 ]; then
        rechecking $prev_points previously highlighted point(s)"
 fi
 
-# There is no round 2 on the pass route, so do not print a budget the user cannot spend.
+# There is no round 2 on the pass route, so do not print a budget the user cannot spend. The cap
+# is written by the hook, the only side that can see how often the user chose to keep sparring;
+# started by hand there is no such file, and the base budget is the honest answer.
+cap=$(ps_num "$(cat "$dir/cap" 2>/dev/null || true)")
+[ "$cap" -ge 1 ] || cap=$(ps_budget 0)
 case "$route" in
   pass) where="single review pass" ;;
-  *)    where="round $round/$PS_MAX_ROUNDS" ;;
+  *)    where="round $round/$cap" ;;
 esac
 # secs is set the moment the backend is done, before the first failure branch: on a timeout or a
 # dead CLI the duration is the more interesting half of the digest. Initialised here because

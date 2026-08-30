@@ -23,6 +23,7 @@ PS_LABEL_SPAR="Spar with ${PS_BACKEND_NAME}"
 PS_LABEL_PASS="One review pass"
 PS_LABEL_DIRECT="Straight from Claude"
 PS_LABEL_ACCEPT="Present it as it stands"   # offered once the rounds run out
+PS_LABEL_MORE="Keep sparring"               # grants another budget when the rounds run out
 PS_LABEL_RETRY="Retry"          # keeps the current route; ignored when resolving it
 
 # --- state -------------------------------------------------------------------
@@ -61,9 +62,14 @@ ps_records_since() {
 #     tool that merely PRINTS the answer string cannot choose the route
 #   - labels are compared for equality, not substring
 #   - "Retry" answers are skipped, so the last real route survives a failure dialogue
-# $1 transcript, $2 offset -> spar | pass | direct | accept | (empty)
+#   - the extension label is counted, not just routed: each one buys another round budget
+# $1 transcript, $2 offset -> two lines, the route (spar|pass|direct|accept|empty) and how many
+# times the user asked to keep sparring after the budget ran out
 ps_route() {
-  local recs ids id ans line label out=""
+  # more=0 is load-bearing, not decoration: from bash 4.4 on, `local more` leaves the variable
+  # UNSET rather than null, so under the callers' set -u every ordinary route - the ones where no
+  # extension was ever granted - would die on "$more" before printing anything.
+  local recs ids id ans line label out="" more=0
   recs=$(ps_records_since "$1" "$2")
   [ -n "$recs" ] || return 0
   ids=$(printf '%s\n' "$recs" | jq -Rr --arg q "$PS_QUESTION" '
@@ -85,11 +91,12 @@ ps_route() {
         "$PS_LABEL_ACCEPT") out=accept ;;
         "$PS_LABEL_PASS")   out=pass ;;
         "$PS_LABEL_SPAR")   out=spar ;;
+        "$PS_LABEL_MORE")   out=spar; more=$((more + 1)) ;;
         *) : ;;   # "Retry", "Cancel planning", free text: leave the current route alone
       esac
     done <<< "$ans"
   done
-  printf '%s' "$out"
+  printf '%s\n%s\n' "$out" "$more"
 }
 
 # --- the receipt -------------------------------------------------------------
@@ -122,6 +129,20 @@ ps_receipt() {   # $1 = epoch dir -> epoch, status, outcome, input_sha256, round
 ps_num() {
   case "${1:-}" in ''|*[!0-9]*|????????*) printf 0; return ;; esac
   printf '%s' "$((10#$1))"
+}
+
+# How many rounds this plan is allowed before the gate stops and asks. Each time the user chose
+# to keep sparring buys one more budget, so the question comes back once per budget instead of
+# once per round - the whole point of the extension label.
+# PS_MAX_ROUNDS comes straight out of the environment and is not a number until it has been
+# checked: `[ 3 -ge abc ]` FAILS rather than errors, which used to remove the cap altogether, and
+# the same value inside $(( )) is worse than that. At least 1, so a budget of 0 cannot demand a
+# decision before the first round has even run.
+ps_budget() {   # $1 = how many extensions the user granted -> the round budget
+  local step more
+  step=$(ps_num "$PS_MAX_ROUNDS"); [ "$step" -ge 1 ] || step=1
+  more=$(ps_num "${1:-0}")
+  printf '%s' "$(( step * (more + 1) ))"
 }
 
 # --- digest helpers ----------------------------------------------------------

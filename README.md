@@ -111,8 +111,10 @@ asks for. Rebutting is the other half of the loop and Claude is told to treat it
 a point it does not accept goes into the plan under `## Rebuttals`, and the reviewer is asked to
 weigh the rebuttal rather than repeat itself. A `## Scope` section naming what the plan
 deliberately leaves out is checked against, not counted as a gap. After three rounds without
-agreement the gate stops asking for more and puts it to you: keep going, present it as it stands,
-or drop to the unreviewed route.
+agreement the gate stops asking for more and puts it to you: **Keep sparring**, present it as it
+stands, or drop to the unreviewed route. Keeping on grants another three rounds and the question
+comes back then — you are asked once per budget, never once per round, and it never disappears
+entirely.
 
 **If the reviewer will not cooperate** — rate limit, hang, no network — nothing is ever waved
 through on a counter. After repeated failures the gate asks *you*: **Retry**, switch this plan to
@@ -128,7 +130,7 @@ You always get to your plan, as a visible decision.
 | `PLAN_SPARRING_MODEL` | `gpt-5.6-sol` | |
 | `PLAN_SPARRING_EFFORT` | `medium` | `xhigh` for genuinely large plans; it roughly quadruples the wait |
 | `PLAN_SPARRING_TIMEOUT` | `600` | seconds before the reviewer is killed |
-| `PLAN_SPARRING_MAX_ROUNDS` | `3` | after this many rounds without agreement the gate asks you what to do |
+| `PLAN_SPARRING_MAX_ROUNDS` | `3` | after this many rounds without agreement the gate asks you what to do; *Keep sparring* grants the same number again. Set it high for an effectively unlimited run |
 | `PLAN_SPARRING_KEEP` | unset | set to anything to keep the round's artifacts instead of deleting them on the way out |
 
 ## Another vendor
