@@ -1,3 +1,4 @@
 {"message":{"content":[{"type":"text","text":"fine"}]}}
+{"message":{"content":[{"type":"tool_use","name":"AskUserQuestion","id":"toolu_fix1","input":{"questions":[{"question":"How should this plan be produced?","header":"Plan route"}]}}]}}
 {this is not json at all
-{"message":{"content":[{"type":"tool_result","content":"Your questions have been answered: \"How should this plan be produced?\"=\"Straight from Claude\". You can now continue."}]}}
+{"message":{"content":[{"type":"tool_result","tool_use_id":"toolu_fix1","content":"Your questions have been answered: \"How should this plan be produced?\"=\"Straight from Claude\". You can now continue."}]}}

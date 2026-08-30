@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# Shared contract between the hook and the runner. Everything that both sides must agree on
-# lives here exactly once: the backend, the question wording, the option labels, the state paths.
+# Shared contract between the hook and the runner. Everything both sides must agree on lives here
+# exactly once: the backend, the question wording, the option labels, the state paths.
 
 # --- backend -----------------------------------------------------------------
 # THE SWAP POINT for a different vendor is ps_backend_run() in bin/plan-sparring-review.
-# Only the name and the binary live here.
 PS_BACKEND_NAME="${PLAN_SPARRING_BACKEND_NAME:-Codex}"
 PS_BACKEND_BIN="${PLAN_SPARRING_BIN:-codex}"
 PS_MODEL="${PLAN_SPARRING_MODEL:-gpt-5.6-sol}"
@@ -12,48 +11,77 @@ PS_EFFORT="${PLAN_SPARRING_EFFORT:-xhigh}"
 PS_TIMEOUT="${PLAN_SPARRING_TIMEOUT:-600}"
 
 # --- the question and its labels ---------------------------------------------
-# The gate greps the transcript for these exact strings, so the hook must instruct Claude to
-# use them verbatim. Change them here and both sides follow.
+# Every question the plugin asks - including the one after a failure - uses PS_QUESTION verbatim.
+# Only the header differs. A fallback question with its own wording would not be recognised here
+# and the user's escape would silently do nothing.
 PS_QUESTION="How should this plan be produced?"
 PS_LABEL_SPAR="Spar with ${PS_BACKEND_NAME}"
 PS_LABEL_PASS="One review pass"
 PS_LABEL_DIRECT="Straight from Claude"
+PS_LABEL_RETRY="Retry"          # keeps the current route; ignored when resolving it
 
 # --- state -------------------------------------------------------------------
-# Everything lives under one temp root and is deleted when an epoch closes. The plan text
-# is in there, hence umask 077.
 umask 077
 PS_ROOT="${TMPDIR:-/tmp}/plan-sparring"
 
 ps_sid() { printf '%s' "${1:-nosid}" | tr -cd 'A-Za-z0-9._-' | cut -c1-64; }
 ps_mode_file() { printf '%s/mode-%s' "$PS_ROOT" "$(ps_sid "$1")"; }
 ps_epoch_dir() { printf '%s/ep-%s' "$PS_ROOT" "$(ps_sid "$1")"; }
+ps_sha() { if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | cut -d' ' -f1; else sha256sum "$1" | cut -d' ' -f1; fi; }
 
-ps_token() { head -c 12 /dev/urandom 2>/dev/null | od -An -tx1 | tr -d ' \n' || printf '%s' "$$"; }
+# The || fallback must test the OUTPUT, not the exit status: od on empty input succeeds, so a
+# missing /dev/urandom would silently yield an empty epoch id - and an empty id would match an
+# empty receipt field, opening the gate.
+ps_token() {
+  local t
+  t=$(head -c 12 /dev/urandom 2>/dev/null | od -An -tx1 | tr -d ' \n')
+  [ -n "$t" ] || t="$$-$(date +%s)"
+  printf '%s' "$t"
+}
 
-# Decode a JSONL transcript from a byte offset, tolerating a truncated first line.
 # $1 transcript path, $2 byte offset
 ps_records_since() {
-  local tp="$1" off="${2:-0}"
+  local tp="$1" off="${2:-0}" size
   [ -f "$tp" ] || return 0
+  size=$(wc -c < "$tp" 2>/dev/null | tr -d ' '); [ -n "$size" ] || size=0
+  # A truncated or replaced transcript would leave a stale offset past the end of the file and
+  # hide every later answer: the gate would deny forever with no way out.
+  if [ "$off" -gt "$size" ] 2>/dev/null; then off=0; fi
   tail -c "+$((off + 1))" "$tp" 2>/dev/null
 }
 
-# Which route did the user pick? Reads ONLY tool_result blocks after the epoch offset, so a
-# stale answer from an earlier planning round cannot authorise this one. Last answer wins.
-# $1 transcript, $2 offset -> prints: spar | pass | direct | (empty)
+# Which route did the user pick?
+#   - only answers AFTER the epoch offset count, so an earlier round cannot authorise this one
+#   - the answer must belong to an actual AskUserQuestion tool call carrying our question, so a
+#     tool that merely PRINTS the answer string cannot choose the route
+#   - labels are compared for equality, not substring
+#   - "Retry" answers are skipped, so the last real route survives a failure dialogue
+# $1 transcript, $2 offset -> spar | pass | direct | (empty)
 ps_route() {
-  local answers
-  answers=$(ps_records_since "$1" "$2" | jq -Rr '
-      fromjson? // empty
-      | .message.content[]?
-      | select(.type == "tool_result")
-      | .. | strings
-    ' 2>/dev/null | grep -o "${PS_QUESTION}\"=\"[^\"]*\"" | tail -1)
-  case "$answers" in
-    *"$PS_LABEL_DIRECT"*) printf 'direct' ;;
-    *"$PS_LABEL_PASS"*)   printf 'pass' ;;
-    *"$PS_LABEL_SPAR"*)   printf 'spar' ;;
-    *)                    printf '' ;;
-  esac
+  local recs ids id ans line label out=""
+  recs=$(ps_records_since "$1" "$2")
+  [ -n "$recs" ] || return 0
+  ids=$(printf '%s\n' "$recs" | jq -Rr --arg q "$PS_QUESTION" '
+      fromjson? // empty | .message.content[]?
+      | select(.type == "tool_use" and .name == "AskUserQuestion")
+      | select((.input | tostring) | contains($q)) | .id' 2>/dev/null)
+  [ -n "$ids" ] || return 0
+
+  for id in $ids; do
+    ans=$(printf '%s\n' "$recs" | jq -Rr --arg id "$id" '
+        fromjson? // empty | .message.content[]?
+        | select(.type == "tool_result" and .tool_use_id == $id)
+        | .. | strings' 2>/dev/null | grep -o "${PS_QUESTION}\"=\"[^\"]*\"")
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      label=${line#*\"=\"}; label=${label%\"}
+      case "$label" in
+        "$PS_LABEL_DIRECT") out=direct ;;
+        "$PS_LABEL_PASS")   out=pass ;;
+        "$PS_LABEL_SPAR")   out=spar ;;
+        *) : ;;   # "Retry", "Cancel planning", free text: leave the current route alone
+      esac
+    done <<< "$ans"
+  done
+  printf '%s' "$out"
 }

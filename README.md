@@ -62,15 +62,24 @@ The gate has four outcomes:
 **Receipts, not guesswork.** The gate does not scan the conversation for signs that a review
 happened — that would be fooled by `codex exec … || true`, by an unrelated older call, or by a
 command whose permission you denied (the attempt is recorded either way). Instead the plugin runs
-the review itself through `bin/plan-sparring-review`, which insists on a clean exit and a non-empty
-answer before it writes anything down.
+the review itself through `bin/plan-sparring-review`, which insists on a clean exit, a non-empty
+answer, and a well-formed verdict as the final line before it writes anything down.
+
+The route is read back the same way: only an answer that belongs to an actual `AskUserQuestion`
+call counts, so a tool that merely *prints* the answer string cannot choose your route.
+
+On the *Spar* route the receipt is bound to the exact plan that was agreed to. Change the plan
+after agreement and the gate asks for another round — agreement is about text, not about having
+once run a review.
 
 The plan text never travels through a shell argument: `ExitPlanMode` hands the hook the full plan,
 the hook puts it on disk, and the runner reads it from there.
 
 **If the reviewer will not cooperate** — rate limit, hang, no network — nothing is ever waved
 through on a counter. After repeated failures the gate asks *you*: retry, switch this plan to the
-unreviewed route, or cancel. You always get to your plan, as a visible decision.
+unreviewed route, or cancel. That question uses the same wording as the first one, so your answer
+actually changes the route rather than disappearing into a dialogue the gate does not recognise.
+You always get to your plan, as a visible decision.
 
 ## Configuration
 
@@ -97,6 +106,9 @@ Read these before you rely on it.
 - **The receipt proves a review happened this round — not that the reviewer blessed the final
   wording.** The plan is supposed to change after objections, so there is deliberately no hash
   comparison against what you finally see.
+- **A hard crash of the hook still fails open.** Claude Code treats a non-zero hook exit as
+  non-blocking, so the gate can only deny when it runs far enough to say so. Missing dependencies
+  and unreadable state are handled explicitly; a broken interpreter is not.
 - **Plan mode inside a subagent is untested and unsupported.**
 - **Leaving and re-entering plan mode with Shift+Tab, with no prompt in between, is invisible**
   to the plugin. There is no hook on the toggle itself.
@@ -110,7 +122,9 @@ Read these before you rely on it.
 bash tests/run.sh
 ```
 
-43 assertions against a fake backend: no network, no auth, no rate limit.
+59 assertions against a fake backend: no network, no auth, no rate limit. They cover the route
+provenance, epoch binding, plan-hash binding, verdict parsing, the failure escape, the timeout,
+and a transcript that has been truncated underneath a running round.
 
 ## Uninstall
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Stand-in for the real CLI so the tests need no network, no auth and no rate limit.
-# Behaviour is picked with FAKE_MODE: agreed | objections | fail | empty | hang
+# FAKE_MODE: agreed | objections | garbage | trailing | fail | empty | hang
 set -uo pipefail
 out=""; prev=""
 for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done
@@ -8,7 +8,10 @@ echo "session id: 0123abcd-dead-beef-0000-000000000001"
 case "${FAKE_MODE:-agreed}" in
   fail)  echo "boom" >&2; exit 3 ;;
   empty) : > "$out"; exit 0 ;;
-  hang)  sleep 120; exit 0 ;;
+  hang)  exec sleep 987 ;;
+  garbage)  printf 'service unavailable\n' > "$out" ;;
+  # An early agreement followed by a real objection: only the LAST line may count.
+  trailing) printf 'VERDICT: AGREED\nActually, no.\nVERDICT: OBJECTIONS\n' > "$out" ;;
   objections) printf 'Point one is wrong.\nVERDICT: OBJECTIONS\n' > "$out" ;;
   *)     printf 'Looks sound.\nVERDICT: AGREED\n' > "$out" ;;
 esac

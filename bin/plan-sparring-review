@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # plan-sparring-review — hand the current plan to the sparring partner, print its objections,
-# and record a receipt the gate can trust. Called by Claude, named verbatim in the denial.
+# and record a receipt the gate can trust.
 #
 #   plan-sparring-review --epoch <dir>
 #
-# Reads the plan from <dir>/plan.md (the hook put it there straight out of ExitPlanMode), so the
-# plan never travels through a shell argument.
+# The plan is read from <dir>/plan.md, where the hook put it straight out of ExitPlanMode, so it
+# never travels through a shell argument.
 set -uo pipefail
 
 PS_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -17,7 +17,7 @@ die() { printf 'plan-sparring: %s\n' "$1" >&2; exit 2; }
 dir=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --epoch) dir="${2:-}"; shift 2 ;;
+    --epoch) [ $# -ge 2 ] || die "--epoch needs a directory"; dir="$2"; shift 2 ;;
     -h|--help) sed -n '2,9p' "$0"; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
@@ -27,15 +27,24 @@ done
 [ -d "$dir" ] || die "no such epoch: $dir (the planning round may have ended; call ExitPlanMode again)"
 [ -s "$dir/plan.md" ] || die "no plan recorded in $dir - call ExitPlanMode once so the hook can capture the plan, then run this again"
 command -v "$PS_BACKEND_BIN" >/dev/null 2>&1 || die "\"$PS_BACKEND_BIN\" not found on PATH"
+case "$PS_TIMEOUT" in ''|*[!0-9]*) die "PLAN_SPARRING_TIMEOUT must be a whole number of seconds, got: $PS_TIMEOUT" ;; esac
+[ "$PS_TIMEOUT" -gt 0 ] || die "PLAN_SPARRING_TIMEOUT must be greater than 0"
 
-ps_sha() { if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | cut -d' ' -f1; else sha256sum "$1" | cut -d' ' -f1; fi; }
 ps_fail() { echo $(( $(cat "$dir/fails" 2>/dev/null || echo 0) + 1 )) > "$dir/fails"; }
+
+# Snapshot what we are about to review. If the epoch is recycled or the plan replaced while the
+# backend is still thinking, the answer describes a plan that no longer exists and must not be
+# turned into a receipt for the new one.
+epoch_before=$(cat "$dir/id" 2>/dev/null || true)
+sha_before=$(ps_sha "$dir/plan.md")
+[ -n "$epoch_before" ] || die "epoch $dir has no id - it looks corrupt; call ExitPlanMode again to open a fresh round"
 
 round=$(( $(jq -r '.round // 0' "$dir/receipt.json" 2>/dev/null || echo 0) + 1 ))
 thread=$(cat "$dir/thread" 2>/dev/null || true)
 
 # resume runs in the CURRENT directory, so later rounds must start where round 1 did.
 if [ "$round" -gt 1 ] && [ -s "$dir/cwd" ]; then cd "$(cat "$dir/cwd")" 2>/dev/null || true; else printf '%s' "$PWD" > "$dir/cwd"; fi
+[ "$round" -gt 1 ] && [ -z "$thread" ] && printf 'plan-sparring: no thread id from the previous round, starting a fresh conversation.\n' >&2
 
 if [ "$round" -eq 1 ]; then
   header="You are the sparring partner for a Claude Code implementation plan. Be adversarial: name
@@ -46,22 +55,28 @@ still does not hold. Do not rewrite the plan."
 fi
 prompt="$header
 
-Finish with exactly one line, nothing after it:
-VERDICT: AGREED        - if you would ship this plan as written
-VERDICT: OBJECTIONS    - if anything above must be addressed first
+Your last non-empty line must be EXACTLY one of these two, with nothing after it:
+VERDICT: AGREED
+VERDICT: OBJECTIONS
 
 --- PLAN ---
 $(cat "$dir/plan.md")"
 
+# The whole prompt goes as one argument; feeding this CLI on stdin is the documented way to make
+# it hang before it even starts a session.
+[ "${#prompt}" -lt 200000 ] || die "this plan is too large to send as one argument (${#prompt} bytes). Shorten it, or review it manually."
+
 # --- THE SWAP POINT ----------------------------------------------------------
 # Everything vendor-specific is in this one function. A different vendor means rewriting it and
 # nothing else: the contract around it is plain text in, review on stdout, VERDICT line at the end.
+# `exec` matters: it replaces the background subshell with the CLI, so the pid we may have to kill
+# is the CLI itself and not a parent that would leave it orphaned.
 ps_backend_run() {
   local out="$1" log="$2"
   if [ "$round" -gt 1 ] && [ -n "$thread" ]; then
-    "$PS_BACKEND_BIN" exec resume --skip-git-repo-check "$thread" -o "$out" "$prompt" </dev/null >"$log" 2>&1
+    exec "$PS_BACKEND_BIN" exec resume --skip-git-repo-check "$thread" -o "$out" "$prompt" </dev/null >"$log" 2>&1
   else
-    "$PS_BACKEND_BIN" exec --skip-git-repo-check -C "$PWD" -m "$PS_MODEL" \
+    exec "$PS_BACKEND_BIN" exec --skip-git-repo-check -C "$PWD" -m "$PS_MODEL" \
       -c model_reasoning_effort="$PS_EFFORT" -s read-only -o "$out" "$prompt" </dev/null >"$log" 2>&1
   fi
 }
@@ -70,41 +85,47 @@ ps_backend_run() {
 out="$dir/review-$round.txt"; log="$dir/log-$round.txt"; rm -f "$out"
 printf 'plan-sparring: round %s, asking %s (%s, effort %s, timeout %ss)...\n' "$round" "$PS_BACKEND_NAME" "$PS_MODEL" "$PS_EFFORT" "$PS_TIMEOUT" >&2
 
-# Portable timeout: macOS ships no `timeout`. A hang here would block the turn before the user
-# can be asked anything, so the deadline is not optional.
 ps_backend_run "$out" "$log" & pid=$!
+trap 'kill -TERM "$pid" 2>/dev/null; exit 130' INT TERM HUP
 deadline=$(( $(date +%s) + PS_TIMEOUT )); timed_out=0
 while kill -0 "$pid" 2>/dev/null; do
   if [ "$(date +%s)" -ge "$deadline" ]; then
-    kill -TERM "$pid" 2>/dev/null; sleep 2; kill -KILL "$pid" 2>/dev/null; timed_out=1; break
+    kill -TERM "$pid" 2>/dev/null
+    for _ in 1 2 3; do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+    kill -KILL "$pid" 2>/dev/null; timed_out=1; break
   fi
   sleep 2
 done
 wait "$pid" 2>/dev/null; rc=$?
+trap - INT TERM HUP
 
-if [ "$timed_out" -eq 1 ]; then
-  ps_fail; die "$PS_BACKEND_NAME did not answer within ${PS_TIMEOUT}s and was killed. Raise PLAN_SPARRING_TIMEOUT, or ask the user how to proceed."
-fi
-if [ "$rc" -ne 0 ]; then
-  ps_fail; printf '%s\n' "$(tail -5 "$log" 2>/dev/null)" >&2
-  die "$PS_BACKEND_NAME exited with status $rc (see above). No receipt was written."
-fi
-if [ ! -s "$out" ]; then
-  ps_fail; die "$PS_BACKEND_NAME returned an empty review. No receipt was written."
-fi
+[ "$timed_out" -eq 1 ] && { ps_fail; die "$PS_BACKEND_NAME did not answer within ${PS_TIMEOUT}s and was killed. Raise PLAN_SPARRING_TIMEOUT, or ask the user how to proceed."; }
+[ "$rc" -ne 0 ] && { ps_fail; tail -5 "$log" 2>/dev/null >&2; die "$PS_BACKEND_NAME exited with status $rc (see above). No receipt was written."; }
+[ -s "$out" ] || { ps_fail; die "$PS_BACKEND_NAME returned an empty review. No receipt was written."; }
 
-# The thread id is what later rounds resume; --last would grab the wrong one when two sessions
-# spar in the same directory.
+# One verdict, as the final non-empty line, exactly as asked for. Anything else - a truncated
+# answer, a service error printed as prose, a stray earlier VERDICT line - is not a review.
+verdict=$(grep -v '^[[:space:]]*$' "$out" | tail -1 | tr -d '\r')
+verdict="${verdict#"${verdict%%[![:space:]]*}"}"; verdict="${verdict%"${verdict##*[![:space:]]}"}"
+case "$verdict" in
+  "VERDICT: AGREED")     outcome=agreed ;;
+  "VERDICT: OBJECTIONS") outcome=objections ;;
+  *) ps_fail; die "$PS_BACKEND_NAME did not end with a verdict line (last line was: ${verdict:-<empty>}). Treating this as a failed review; no receipt was written." ;;
+esac
+
+# The epoch must still be the one we reviewed.
+[ "$(cat "$dir/id" 2>/dev/null || true)" = "$epoch_before" ] || die "the planning round changed while $PS_BACKEND_NAME was working; no receipt was written. Call ExitPlanMode again and rerun this."
+[ "$(ps_sha "$dir/plan.md")" = "$sha_before" ] || die "the plan changed while $PS_BACKEND_NAME was working; no receipt was written. Rerun this command to review the current plan."
+
 [ -n "$thread" ] || { thread=$(grep -oE 'session id: [0-9a-fA-F-]{8,}' "$log" 2>/dev/null | tail -1 | awk '{print $3}'); printf '%s' "$thread" > "$dir/thread"; }
 
-outcome=objections
-grep -qE '^[[:space:]]*VERDICT:[[:space:]]*AGREED' "$out" && outcome=agreed
-
-jq -n --arg e "$(cat "$dir/id" 2>/dev/null)" --arg b "$PS_BACKEND_NAME" --arg m "$PS_MODEL" \
-      --arg t "$thread" --argjson r "$round" --arg ih "$(ps_sha "$dir/plan.md")" \
-      --arg oh "$(ps_sha "$out")" --arg o "$outcome" \
-  '{epoch:$e, backend:$b, model:$m, thread:$t, round:$r, input_sha256:$ih, output_sha256:$oh, status:"ok", outcome:$o}' \
-  > "$dir/receipt.json.tmp" && mv -f "$dir/receipt.json.tmp" "$dir/receipt.json"
+if ! { jq -n --arg e "$epoch_before" --arg b "$PS_BACKEND_NAME" --arg m "$PS_MODEL" \
+        --argjson r "$round" --arg ih "$sha_before" --arg o "$outcome" \
+        '{epoch:$e, backend:$b, model:$m, round:$r, input_sha256:$ih, status:"ok", outcome:$o}' \
+        > "$dir/receipt.json.tmp" && mv -f "$dir/receipt.json.tmp" "$dir/receipt.json"; }; then
+  rm -f "$dir/receipt.json.tmp"; ps_fail
+  die "the review came back but the receipt could not be written to $dir. Check disk space and permissions."
+fi
 echo 0 > "$dir/fails"
 
 echo "===== $PS_BACKEND_NAME, round $round — outcome: $outcome ====="
@@ -112,7 +133,7 @@ cat "$out"
 [ -n "$(tail -c1 "$out")" ] && echo   # the review may end without a newline
 echo "====="
 if [ "$outcome" = agreed ]; then
-  echo "Receipt written. ExitPlanMode is open for this plan."
+  echo "Receipt written. ExitPlanMode is open for this plan as it stands - change it and the agreement no longer applies."
 else
   echo "Receipt written, but objections stand. Work through them, then: on the \"$PS_LABEL_PASS\" route call ExitPlanMode; on the \"$PS_LABEL_SPAR\" route run this command again for the next round."
 fi
