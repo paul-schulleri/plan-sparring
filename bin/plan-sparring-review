@@ -109,6 +109,7 @@ echo 0 > "$dir/fails"
 
 echo "===== $PS_BACKEND_NAME, round $round — outcome: $outcome ====="
 cat "$out"
+[ -n "$(tail -c1 "$out")" ] && echo   # the review may end without a newline
 echo "====="
 if [ "$outcome" = agreed ]; then
   echo "Receipt written. ExitPlanMode is open for this plan."
