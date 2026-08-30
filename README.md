@@ -168,6 +168,15 @@ a transcript that has been truncated underneath a running round, and every shape
 gate must refuse to trust - a round that is not a whole number, a control character smuggled into
 a field, valid JSON with garbage after it.
 
+Linting needs the flags, not just the filenames:
+
+```
+shellcheck -x --source-path=SCRIPTDIR hooks/plan-sparring.sh bin/plan-sparring-review
+```
+
+Without them shellcheck cannot open `lib/common.sh`, checks the two scripts blind, and then
+reports every shared variable in the library as unused. With them, both come out clean.
+
 ## Uninstall
 
 ```

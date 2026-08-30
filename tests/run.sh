@@ -11,6 +11,9 @@ RUNNER="$ROOT/bin/plan-sparring-review"
 export TMPDIR; TMPDIR="$(mktemp -d)" || { echo "mktemp failed"; exit 1; }
 [ -d "$TMPDIR" ] && [ -w "$TMPDIR" ] || { echo "test tmpdir unusable"; exit 1; }
 export PLAN_SPARRING_BIN="$HERE/fake-backend"
+# pgrep below searches every process on the machine, so the marker has to be unique to this run:
+# two suites in a row would otherwise trip over each other's hang.
+export PS_HANG_SECS="9$$"
 export PLAN_SPARRING_TIMEOUT=8
 trap 'rm -rf "$TMPDIR"' EXIT
 
@@ -183,7 +186,7 @@ check "a real AskUserQuestion answer does" "$(printf '%s' "$o" | decision)" "all
 
 # #6 the escape has to use the SAME question, otherwise the user's way out changes nothing.
 TR="$TMPDIR/tr.jsonl"; : > "$TR"; ups sR plan "$TR" | bash "$HOOK" >/dev/null
-DR=$(ps_epoch_dir sR); answer "$PS_LABEL_SPAR" >> "$TR"
+answer "$PS_LABEL_SPAR" >> "$TR"
 gate sR "$TR" "plan r" | bash "$HOOK" >/dev/null
 answer "$PS_LABEL_RETRY" >> "$TR"
 o=$(gate sR "$TR" "plan r" | bash "$HOOK")
@@ -226,7 +229,7 @@ o=$(printf '%s' "$pl" | PATH="$NOJQ" "$NOJQ/bash" "$HOOK")   # ...and run the ho
 check "gate denies when jq is unavailable" "$(printf '%s' "$o" | decision)" "deny"
 
 # #7 exec in the background child means the process we kill IS the backend.
-[ "$(pgrep -f 'sleep 987' | wc -l | tr -d ' ')" = "0" ] && ok "timeout leaves no orphan process" || bad "timeout leaves no orphan process"
+[ "$(pgrep -f "sleep $PS_HANG_SECS" | wc -l | tr -d ' ')" = "0" ] && ok "timeout leaves no orphan process" || bad "timeout leaves no orphan process"
 
 # The direct route means no external review, so nothing of the plan is written down.
 TD="$TMPDIR/td.jsonl"; : > "$TD"; ups sD plan "$TD" | bash "$HOOK" >/dev/null

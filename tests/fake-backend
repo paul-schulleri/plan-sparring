@@ -9,7 +9,7 @@ echo "session id: 0123abcd-dead-beef-0000-000000000001"
 case "${FAKE_MODE:-agreed}" in
   fail)  echo "boom" >&2; exit 3 ;;
   empty) : > "$out"; exit 0 ;;
-  hang)  exec sleep 987 ;;
+  hang)  exec sleep "${PS_HANG_SECS:-987}" ;;   # duration doubles as this run's pgrep marker
   garbage)  printf 'service unavailable\n' > "$out" ;;
   # An early agreement followed by a real objection: only the LAST line may count.
   trailing) printf 'VERDICT: AGREED\nActually, no.\nVERDICT: OBJECTIONS\n' > "$out" ;;
