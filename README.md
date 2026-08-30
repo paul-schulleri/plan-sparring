@@ -57,7 +57,7 @@ Without `codex` on your `PATH` the plugin says so once and stays out of the way.
 ## Install
 
 ```
-/plugin marketplace add <owner>/plan-sparring
+/plugin marketplace add paul-schulleri/plan-sparring
 /plugin install plan-sparring@plan-sparring
 ```
 
