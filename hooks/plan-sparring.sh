@@ -99,6 +99,9 @@ command ("sending the draft to $PS_BACKEND_NAME, round 2"), and immediately afte
 digest block the command prints - round, what went out, what came back - in the language of the
 conversation. Relay it on failures too. Do not paste the full review; the digest is the point.
 
+Give the plan a short "Scope" line naming what it deliberately does not cover. The reviewer checks
+against that, instead of against a bigger tool it imagines.
+
 Now continue with the actual task.
 TXT
   exit 0
@@ -164,7 +167,7 @@ PreToolUse)
   fi
 
   if [ "$route" = "spar" ] && [ "$rounds" -ge "$PS_MAX_ROUNDS" ] 2>/dev/null; then
-    deny "plan-sparring · $rounds rounds, no agreement · your call" "$PS_BACKEND_NAME has been round $rounds on this plan without agreeing, and an adversarial reviewer will keep finding something. Stop and ask the user how to proceed: one AskUserQuestion with the question \"$PS_QUESTION\" (header \"Rounds used up\") and these labels VERBATIM: \"$PS_LABEL_SPAR\" (keep going), \"$PS_LABEL_ACCEPT\" (present the plan as it stands, unreviewed objections and all), \"$PS_LABEL_DIRECT\". Summarise what is still open in one or two lines first so they can decide."
+    deny "plan-sparring · $rounds rounds, no agreement · your call" "$PS_BACKEND_NAME has been round $rounds on this plan without agreeing, and an adversarial reviewer will keep finding something. Stop and ask the user how to proceed: one AskUserQuestion with the question \"$PS_QUESTION\" (header \"Rounds used up\") and these labels VERBATIM: \"$PS_LABEL_SPAR\" (keep going), \"$PS_LABEL_ACCEPT\" (present the plan as it stands, unreviewed objections and all), \"$PS_LABEL_DIRECT\". Name the rounds spent, roughly what each cost, and what the last round actually brought, in one or two lines first so they can decide."
   fi
 
   fails=$(cat "$dir/fails" 2>/dev/null || echo 0)
@@ -183,12 +186,18 @@ PreToolUse)
     st="plan-sparring · handing the draft to $PS_BACKEND_NAME"
   fi
 
+  # A reviewer that is never contradicted is not a sparring partner. Rebutting is the other half
+  # of the loop, so it gets named as an equal move and given a place in the plan to live.
+  rebut="Decide each objection separately: incorporate it, or rebut it. A rebuttal belongs in the plan under a \"## Rebuttals\" heading, one line per point - \"- <the point> - <why it does not apply here>\". It is a legitimate answer, not a dodge: the reviewer is told to weigh it. Change nothing that was not the subject of an objection."
+  # Only once a round has come back: on the handover there is nothing to call an edge case yet.
+  [ -f "$dir/receipt.json" ] && edge=" If what came back is an edge case of an edge case for what this plan actually covers, say that in the rebuttal instead of hardening further."
+
   if [ "$route" = "spar" ]; then
     [ -f "$dir/receipt.json" ] || first=" (this first block is the handover, not a rejection: it is how your draft reaches the reviewer)"
-    deny "$st" "This plan still needs to be sparred with $PS_BACKEND_NAME.${first:-} Run: $cmd - it hands $PS_BACKEND_NAME the plan, prints the objections, and records the result. Work through every objection (incorporate it, or rebut it in the plan), then call ExitPlanMode again - that is what hands your revised draft over, and you will be pointed at the next round from there. Running the command twice in a row reviews the SAME draft again. ExitPlanMode opens once $PS_BACKEND_NAME returns VERDICT: AGREED for the plan as it then stands. Do not edit or fake the receipt."
+    deny "$st" "This plan still needs to be sparred with $PS_BACKEND_NAME.${first:-} Run: $cmd - it hands $PS_BACKEND_NAME the plan, prints the objections, and records the result. $rebut${edge:-} Then call ExitPlanMode again - that is what hands your revised draft over, and you will be pointed at the next round from there. Running the command twice in a row reviews the SAME draft again. ExitPlanMode opens once $PS_BACKEND_NAME returns VERDICT: AGREED for the plan as it then stands. Do not edit or fake the receipt."
   fi
   [ -f "$dir/receipt.json" ] || first=" (this first block is the handover, not a rejection: it is how your draft reaches the reviewer)"
-  deny "$st" "This plan still needs one $PS_BACKEND_NAME review pass.${first:-} Run: $cmd - it hands $PS_BACKEND_NAME the plan, prints the objections, and records the result. Incorporate what it raises (or rebut it in the plan), then call ExitPlanMode again. Do not edit or fake the receipt."
+  deny "$st" "This plan still needs one $PS_BACKEND_NAME review pass.${first:-} Run: $cmd - it hands $PS_BACKEND_NAME the plan, prints the objections, and records the result. $rebut Then call ExitPlanMode again. Do not edit or fake the receipt."
   ;;
 
 esac

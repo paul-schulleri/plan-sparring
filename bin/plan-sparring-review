@@ -69,7 +69,8 @@ only about things that would actually hurt: data loss or corruption, a crash or 
 plainly not doing what it says. Do NOT raise style, naming, structure, extra test coverage, or
 \"the plan does not mention X\" unless the omission causes one of those three. Do not rewrite the
 plan. A limitation the plan states openly and accepts - a narrowed scope, a named non-goal - is a
-valid answer to an objection; do not insist it be implemented. If nothing in those classes is left,
+valid answer to an objection; do not insist it be implemented. The plan may carry a \"## Scope\" or
+\"## Rebuttals\" section; treat both as answers, not as gaps. If nothing in those classes is left,
 agree, even if you would have written it differently."
 else
   header="This is round $round. Here is the plan revised after your previous objections. Say what
@@ -77,7 +78,10 @@ still does not hold, using the same threshold as before: data loss, crash or han
 plainly not working. Check in particular whether the changes made since the last round broke
 something that already worked - a fix for one objection regressing another path is the common
 failure here. New wishes outside those classes do not belong. A limitation the plan states openly
-and accepts is a valid answer. If nothing in those classes is left, agree."
+and accepts is a valid answer. Where the plan rebuts a point you raised, either accept the rebuttal
+or say concretely why it does not hold - do not restate the point unchanged. Judge what is left
+against the plan's stated scope: if the remaining risk is implausible for what this plan covers,
+agree. If nothing in those classes is left, agree."
 fi
 prompt="$header
 
@@ -143,9 +147,13 @@ case "$route" in
   pass) where="single review pass" ;;
   *)    where="round $round/$PS_MAX_ROUNDS" ;;
 esac
+# secs is set the moment the backend is done, before the first failure branch: on a timeout or a
+# dead CLI the duration is the more interesting half of the digest. Initialised here because
+# digest() is defined before the run and set -u would kill the caller mid-report.
+secs=0
 digest() {   # $1 = the "back" block, $2 = the "next" line
   printf '\n%s\n%s\n%s\nnext   %s\n' \
-    "plan-sparring · $where · $PS_BACKEND_NAME $PS_MODEL $PS_EFFORT" \
+    "plan-sparring · $where · $PS_BACKEND_NAME $PS_MODEL $PS_EFFORT · ${secs}s" \
     "$sent" "$1" "$2"
 }
 # Failures used to print nothing but an error, which is exactly when the transcript went dark.
@@ -154,6 +162,7 @@ fail_digest() { digest "back   FAILED — $1" "$2"; ps_fail; die "$1"; }
 out="$dir/review-$round.txt"; log="$dir/log-$round.txt"; rm -f "$out"
 printf 'plan-sparring: round %s, asking %s (%s, effort %s, timeout %ss)...\n' "$round" "$PS_BACKEND_NAME" "$PS_MODEL" "$PS_EFFORT" "$PS_TIMEOUT" >&2
 
+t0=$(date +%s)
 ps_backend_run "$out" "$log" & pid=$!
 trap 'kill -TERM "$pid" 2>/dev/null; exit 130' INT TERM HUP
 deadline=$(( $(date +%s) + PS_TIMEOUT )); timed_out=0
@@ -167,6 +176,7 @@ while kill -0 "$pid" 2>/dev/null; do
 done
 wait "$pid" 2>/dev/null; rc=$?
 trap - INT TERM HUP
+secs=$(( $(date +%s) - t0 ))
 
 [ "$timed_out" -eq 1 ] && fail_digest "$PS_BACKEND_NAME did not answer within ${PS_TIMEOUT}s and was killed" "raise PLAN_SPARRING_TIMEOUT and run this again, or ask the user how to proceed"
 [ "$rc" -ne 0 ] && { tail -5 "$log" 2>/dev/null >&2; fail_digest "$PS_BACKEND_NAME exited with status $rc" "check the error above, then run this again"; }

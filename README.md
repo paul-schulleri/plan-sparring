@@ -29,7 +29,7 @@ Running the review twice in a row is refused rather than silently re-reviewing t
 required to relay it:
 
 ```
-plan-sparring · round 2/3 · Codex gpt-5.6-sol medium
+plan-sparring · round 2/3 · Codex gpt-5.6-sol medium · 94s
 sent   draft, 187 lines (+34 / -7 since round 1)
        rechecking 3 previously highlighted point(s)
 back   OBJECTIONS — 2 highlighted point(s)
@@ -107,7 +107,10 @@ the hook puts it on disk, and the runner reads it from there.
 so two things bound it: the reviewer is told to raise only what would cause data loss, a crash, or
 the plan simply not working — not style, not coverage wishes. A limitation your plan states openly
 and accepts counts as an answer, so you can narrow the scope instead of building what the reviewer
-asks for. After three rounds without
+asks for. Rebutting is the other half of the loop and Claude is told to treat it as an equal move:
+a point it does not accept goes into the plan under `## Rebuttals`, and the reviewer is asked to
+weigh the rebuttal rather than repeat itself. A `## Scope` section naming what the plan
+deliberately leaves out is checked against, not counted as a gap. After three rounds without
 agreement the gate stops asking for more and puts it to you: keep going, present it as it stands,
 or drop to the unreviewed route.
 

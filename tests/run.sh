@@ -290,6 +290,19 @@ o=$(gate sQ "$TQ" "p revised" | bash "$HOOK")
 has "later blocks report pending recheck" "$(printf '%s' "$o" | sysmsg)" "pending recheck"
 hasnt "and do not call them open" "$(printf '%s' "$o" | sysmsg)" "points open"
 
+# Second field run: five of five objections incorporated, none rebutted. Rebutting is allowed but
+# was one clause deep in the denial, and the plan had nowhere to put a rebuttal. Now it is named,
+# it has a heading, and the "this is an edge case" line only appears once a round has come back.
+TB="$TMPDIR/tb.jsonl"; : > "$TB"; ups sB plan "$TB" | bash "$HOOK" >/dev/null
+DB=$(ps_epoch_dir sB); answer "$PS_LABEL_SPAR" >> "$TB"
+o=$(gate sB "$TB" "draft one" | bash "$HOOK")
+has "the denial names the rebuttal option" "$(printf '%s' "$o" | reason)" "## Rebuttals"
+has "and rules out unasked-for extras" "$(printf '%s' "$o" | reason)" "not the subject of an objection"
+hasnt "the handover has no edge case to weigh yet" "$(printf '%s' "$o" | reason)" "edge case of an edge case"
+FAKE_MODE=objections bash "$RUNNER" --epoch "$DB" >/dev/null 2>&1
+o=$(gate sB "$TB" "draft two" | bash "$HOOK")
+has "later blocks offer the edge-case answer" "$(printf '%s' "$o" | reason)" "edge case of an edge case"
+
 echo "== a receipt the gate cannot trust =="
 # The gate is not a boundary against a determined agent - it shares a uid with one. The bar is
 # that it never falls over SILENTLY: a hook that dies mid-decision prints no deny at all, and an
@@ -360,6 +373,11 @@ DW=$(ps_epoch_dir sW); answer "$PS_LABEL_SPAR" >> "$TS2"
 gate sW "$TS2" "plan w" | bash "$HOOK" >/dev/null
 o=$(FAKE_MODE=objections bash "$RUNNER" --epoch "$DW" 2>/dev/null)
 has "spar route still shows the budget" "$o" "round 1/$PS_MAX_ROUNDS"
+# What a round cost belongs in the digest: the user decides whether to spend another one. Matched
+# effort-independently - PLAN_SPARRING_EFFORT is configurable, and "high" must not fail the suite.
+printf '%s' "$o" | grep -qE '^plan-sparring · .* · [0-9]+s$' \
+  && ok "the header says what the round cost" \
+  || bad "the header says what the round cost" "no duration in: $(printf '%s' "$o" | head -2 | tail -1)"
 # The direct route writes nothing of the plan to disk - the route file is no exception.
 TD2="$TMPDIR/td2.jsonl"; : > "$TD2"; ups sDR plan "$TD2" | bash "$HOOK" >/dev/null
 DV2=$(ps_epoch_dir sDR); answer "$PS_LABEL_DIRECT" >> "$TD2"
