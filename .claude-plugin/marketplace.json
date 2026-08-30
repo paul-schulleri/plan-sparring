@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "plan-sparring",
+  "description": "Plan-mode sparring for Claude Code.",
+  "owner": {
+    "name": "Paul Schulleri"
+  },
+  "plugins": [
+    {
+      "name": "plan-sparring",
+      "description": "Ask how a plan should be produced, then require proof of an external review before the plan is presented.",
+      "source": "./",
+      "category": "productivity"
+    }
+  ]
+}
