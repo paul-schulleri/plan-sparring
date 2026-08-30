@@ -347,6 +347,14 @@ FAKE_MODE=objections bash "$RUNNER" --epoch "$DB" >/dev/null 2>&1
 o=$(gate sB "$TB" "draft two" | bash "$HOOK")
 has "later blocks offer the edge-case answer" "$(printf '%s' "$o" | reason)" "edge case of an edge case"
 
+# Third field run: 4 of 4 objections incorporated, none rebutted - with "rebuttal is an equal move"
+# already in place. Naming the option has failed twice, so the choice follows from a check against
+# the source. Both questions must survive: the first alone would rebut "the data-loss path you were
+# asked to close is still open".
+has "the denial states the triage test" "$(printf '%s' "$o" | reason)" "already holds in the code today"
+has "and the second question that keeps it sound" "$(printf '%s' "$o" | reason)" "part of what this plan set out to do"
+has "and asks for evidence, not assertion" "$(printf '%s' "$o" | reason)" "cite file:line"
+
 echo "== a receipt the gate cannot trust =="
 # The gate is not a boundary against a determined agent - it shares a uid with one. The bar is
 # that it never falls over SILENTLY: a hook that dies mid-decision prints no deny at all, and an

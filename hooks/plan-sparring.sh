@@ -197,9 +197,13 @@ PreToolUse)
     st="plan-sparring · handing the draft to $PS_BACKEND_NAME"
   fi
 
-  # A reviewer that is never contradicted is not a sparring partner. Rebutting is the other half
-  # of the loop, so it gets named as an equal move and given a place in the plan to live.
-  rebut="Decide each objection separately: incorporate it, or rebut it. A rebuttal belongs in the plan under a \"## Rebuttals\" heading, one line per point - \"- <the point> - <why it does not apply here>\". It is a legitimate answer, not a dodge: the reviewer is told to weigh it. Change nothing that was not the subject of an objection."
+  # A reviewer that is never contradicted is not a sparring partner. Naming rebutting as an equal
+  # move was not enough - two field runs incorporated 5/5 and 4/4 objections and rebutted none,
+  # because "incorporate or rebut" is a judgement call and incorporating is always the safe one.
+  # So the choice follows from a check that can be answered by reading the source. The second
+  # question is load-bearing: "already holds today" alone would rebut "the data-loss path you
+  # were asked to close is still open", which is a defect, not an inherited limitation.
+  rebut="For each objection, settle two questions against the source, not from memory. First: does it describe something THIS change introduces, or something that already holds in the code today? Second, only if it already holds today: is fixing it part of what this plan set out to do, does the change newly expose it or rely on it, or does leaving it defeat the plan's stated goal? Only when that second answer is no is the behaviour inherited rather than caused - rebut that, and cite file:line as the evidence. Everything else gets incorporated. A rebuttal belongs in the plan under a \"## Rebuttals\" heading, one line per point - \"- <the point> - <why it does not apply here>\". It is a legitimate answer, not a dodge: the reviewer is told to weigh it. Change nothing that was not the subject of an objection."
   # Only once a round has come back: on the handover there is nothing to call an edge case yet.
   [ -f "$dir/receipt.json" ] && edge=" If what came back is an edge case of an edge case for what this plan actually covers, say that in the rebuttal instead of hardening further."
 
