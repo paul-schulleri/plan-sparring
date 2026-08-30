@@ -24,9 +24,9 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 0
 fi
 
-event=$(printf '%s' "$payload" | jq -r '.hook_event_name // empty' 2>/dev/null)
-sid=$(printf '%s' "$payload" | jq -r '.session_id // empty' 2>/dev/null)
-tp=$(printf '%s' "$payload" | jq -r '.transcript_path // empty' 2>/dev/null)
+# One jq call, not four: this hook runs on every prompt of every user.
+IFS=$'\t' read -r event sid tp mode <<< "$(printf '%s' "$payload" | jq -r \
+  '[.hook_event_name // "", .session_id // "", .transcript_path // "", .permission_mode // ""] | @tsv' 2>/dev/null)"
 dir=$(ps_epoch_dir "$sid")
 cmd=$(printf '%q --epoch %q' "$PS_HOME/bin/plan-sparring-review" "$dir")
 
@@ -36,7 +36,6 @@ ask_route() { printf 'Ask exactly one AskUserQuestion with the question "%s" (he
 case "$event" in
 
 UserPromptSubmit)
-  mode=$(printf '%s' "$payload" | jq -r '.permission_mode // empty' 2>/dev/null)
   mf=$(ps_mode_file "$sid")
   mkdir -p "$PS_ROOT" 2>/dev/null
   last=$(cat "$mf" 2>/dev/null || true)
@@ -84,15 +83,16 @@ PreToolUse)
   fi
   [ -f "$dir/skip" ] && exit 0        # no backend was available when this round started
 
-  # Capture the plan first: ExitPlanMode carries the full text, so it never has to travel through
-  # a shell argument, and the hash below has to cover exactly the bytes the runner will read.
-  printf '%s' "$payload" | jq -r '.tool_input.plan // empty' > "$dir/plan.md" 2>/dev/null
-
   off=$(cat "$dir/offset" 2>/dev/null || echo 0)
   route=$(ps_route "$tp" "$off")
 
   [ -z "$route" ] && deny "No plan route has been chosen yet. $(ask_route "Plan route") Then act on the answer and call ExitPlanMode again."
   [ "$route" = "direct" ] && exit 0
+
+  # Only now, once a review is actually on the table. ExitPlanMode carries the full plan text, so
+  # it never travels through a shell argument - and the hash below covers exactly the bytes the
+  # runner will read. On the direct route nothing of the plan is written down at all.
+  printf '%s' "$payload" | jq -r '.tool_input.plan // empty' > "$dir/plan.md" 2>/dev/null
 
   if ! command -v "$PS_BACKEND_BIN" >/dev/null 2>&1; then
     deny "This plan is on the \"$route\" route, but the \"$PS_BACKEND_BIN\" CLI is not on PATH, so no review can be produced. $(ask_route "Sparring unavailable") Picking \"$PS_LABEL_DIRECT\" switches this plan to the unreviewed route."

@@ -220,6 +220,12 @@ check "gate denies when jq is unavailable" "$(printf '%s' "$o" | decision)" "den
 # #7 exec in the background child means the process we kill IS the backend.
 [ "$(pgrep -f 'sleep 987' | wc -l | tr -d ' ')" = "0" ] && ok "timeout leaves no orphan process" || bad "timeout leaves no orphan process"
 
+# The direct route means no external review, so nothing of the plan is written down.
+TD="$TMPDIR/td.jsonl"; : > "$TD"; ups sD plan "$TD" | bash "$HOOK" >/dev/null
+DD=$(ps_epoch_dir sD); answer "$PS_LABEL_DIRECT" >> "$TD"
+gate sD "$TD" "secret plan text" | bash "$HOOK" >/dev/null
+[ -f "$DD/plan.md" ] && bad "direct route writes no plan to disk" || ok "direct route writes no plan to disk"
+
 echo "== exit codes =="
 for ev in UserPromptSubmit PreToolUse; do
   jq -nc --arg e "$ev" '{hook_event_name:$e,session_id:"s9"}' | bash "$HOOK" >/dev/null 2>&1

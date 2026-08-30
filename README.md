@@ -114,7 +114,9 @@ Read these before you rely on it.
   to the plugin. There is no hook on the toggle itself.
 - **The sparring routes send your plan to another vendor's model.** The route question says so.
   Review artifacts, including the plan text, live under `$TMPDIR/plan-sparring/` with mode 600
-  until the epoch closes.
+  until the round ends. On the *Straight from Claude* route the plan is never written down at all.
+  A session that ends while still in plan mode leaves its round behind for the OS to clean up.
+- **The hook costs about 25ms on every prompt**, plan mode or not.
 
 ## Tests
 
@@ -122,7 +124,7 @@ Read these before you rely on it.
 bash tests/run.sh
 ```
 
-59 assertions against a fake backend: no network, no auth, no rate limit. They cover the route
+60 assertions against a fake backend: no network, no auth, no rate limit. They cover the route
 provenance, epoch binding, plan-hash binding, verdict parsing, the failure escape, the timeout,
 and a transcript that has been truncated underneath a running round.
 
