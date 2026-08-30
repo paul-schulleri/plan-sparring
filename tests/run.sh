@@ -62,7 +62,7 @@ o=$(gate s1 "$T" | bash "$HOOK"); check "no route -> deny" "$(printf '%s' "$o" |
 has "no-route denial asks the question" "$(printf '%s' "$o" | reason)" "Plan route"
 
 answer "$PS_LABEL_DIRECT" >> "$T"
-o=$(gate s1 "$T" | bash "$HOOK"); check "straight route -> allow" "$(printf '%s' "$o" | decision)" ""
+o=$(gate s1 "$T" | bash "$HOOK"); check "straight route -> allow" "$(printf '%s' "$o" | decision)" "allow"
 # The epoch deliberately outlives an allow: if the user rejects the plan and keeps planning,
 # a fresh review must not be demanded all over again. It goes when the round ends.
 [ -d "$(ps_epoch_dir s1)" ] && ok "epoch survives an allow" || bad "epoch survives an allow"
@@ -89,7 +89,7 @@ echo "== gate: malformed transcript =="
 T4="$TMPDIR/t4.jsonl"; : > "$T4"; ups s6 plan "$T4" | bash "$HOOK" >/dev/null
 cat "$HERE/fixtures/malformed.jsonl" >> "$T4"
 o=$(gate s6 "$T4" | bash "$HOOK")
-check "broken JSONL line does not break route parsing" "$(printf '%s' "$o" | decision)" ""
+check "broken JSONL line does not break route parsing" "$(printf '%s' "$o" | decision)" "allow"
 
 echo "== runner =="
 o=$(FAKE_MODE=agreed bash "$RUNNER" --epoch "$D" 2>&1); rc=$?
@@ -98,7 +98,7 @@ has "runner prints the review" "$o" "Looks sound."
 check "receipt outcome agreed" "$(jq -r .outcome "$D/receipt.json")" "agreed"
 check "receipt bound to the epoch" "$(jq -r .epoch "$D/receipt.json")" "$(cat "$D/id")"
 [ -s "$D/thread" ] && ok "thread id captured for later rounds" || bad "thread id captured"
-o=$(gate s4 "$T2" | bash "$HOOK"); check "review-pass with receipt -> allow" "$(printf '%s' "$o" | decision)" ""
+o=$(gate s4 "$T2" | bash "$HOOK"); check "review-pass with receipt -> allow" "$(printf '%s' "$o" | decision)" "allow"
 
 # spar route needs agreement, not just a receipt
 T5="$TMPDIR/t5.jsonl"; : > "$T5"; ups s7 plan "$T5" | bash "$HOOK" >/dev/null
@@ -118,7 +118,7 @@ check "spar route with objections -> still deny" "$(printf '%s' "$o" | decision)
 FAKE_MODE=agreed bash "$RUNNER" --epoch "$D7" >/dev/null 2>&1
 check "second round counts up" "$(jq -r .round "$D7/receipt.json")" "2"
 o=$(gate s7 "$T5" "plan seven revised" | bash "$HOOK")
-check "spar route with agreement -> allow" "$(printf '%s' "$o" | decision)" ""
+check "spar route with agreement -> allow" "$(printf '%s' "$o" | decision)" "allow"
 
 echo "== runner failures =="
 T6="$TMPDIR/t6.jsonl"; : > "$T6"; ups s8 plan "$T6" | bash "$HOOK" >/dev/null
@@ -149,7 +149,7 @@ has "rejection is about the missing review, not the escape" "$(printf '%s' "$o" 
 # And the same receipt, correctly bound, opens the gate.
 jq --arg e "$(cat "$D8/id")" '.epoch=$e' "$D8/receipt.json" > "$D8/r.tmp" && mv "$D8/r.tmp" "$D8/receipt.json"
 o=$(gate s8 "$T6" "plan eight" | bash "$HOOK")
-check "same receipt with the right epoch is accepted" "$(printf '%s' "$o" | decision)" ""
+check "same receipt with the right epoch is accepted" "$(printf '%s' "$o" | decision)" "allow"
 
 echo "== regressions =="
 t1=$(ps_token); t2=$(ps_token)
@@ -168,7 +168,7 @@ TS="$TMPDIR/ts.jsonl"; : > "$TS"; ups sS plan "$TS" | bash "$HOOK" >/dev/null
 DS=$(ps_epoch_dir sS); echo 999999 > "$DS/offset"
 answer "$PS_LABEL_DIRECT" >> "$TS"
 o=$(gate sS "$TS" "p" | bash "$HOOK")
-check "stale offset past EOF does not deadlock" "$(printf '%s' "$o" | decision)" ""
+check "stale offset past EOF does not deadlock" "$(printf '%s' "$o" | decision)" "allow"
 
 echo "== code review fixes =="
 # #1 provenance: the answer string alone, with no AskUserQuestion behind it, must not pick a route.
@@ -178,7 +178,7 @@ o=$(gate sF "$TF" "p" | bash "$HOOK")
 check "a bare tool_result cannot choose the route" "$(printf '%s' "$o" | decision)" "deny"
 answer "$PS_LABEL_DIRECT" >> "$TF"
 o=$(gate sF "$TF" "p" | bash "$HOOK")
-check "a real AskUserQuestion answer does" "$(printf '%s' "$o" | decision)" ""
+check "a real AskUserQuestion answer does" "$(printf '%s' "$o" | decision)" "allow"
 
 # #6 the escape has to use the SAME question, otherwise the user's way out changes nothing.
 TR="$TMPDIR/tr.jsonl"; : > "$TR"; ups sR plan "$TR" | bash "$HOOK" >/dev/null
@@ -189,7 +189,7 @@ o=$(gate sR "$TR" "plan r" | bash "$HOOK")
 has "a Retry answer keeps the spar route" "$(printf '%s' "$o" | reason)" "sparred with"
 answer "$PS_LABEL_DIRECT" >> "$TR"
 o=$(gate sR "$TR" "plan r" | bash "$HOOK")
-check "the escape actually switches to the direct route" "$(printf '%s' "$o" | decision)" ""
+check "the escape actually switches to the direct route" "$(printf '%s' "$o" | decision)" "allow"
 
 # #2 on the spar route an agreement covers the exact text that was agreed to.
 TH="$TMPDIR/th.jsonl"; : > "$TH"; ups sH plan "$TH" | bash "$HOOK" >/dev/null
@@ -197,7 +197,7 @@ DH=$(ps_epoch_dir sH); answer "$PS_LABEL_SPAR" >> "$TH"
 gate sH "$TH" "plan version one" | bash "$HOOK" >/dev/null
 FAKE_MODE=agreed bash "$RUNNER" --epoch "$DH" >/dev/null 2>&1
 o=$(gate sH "$TH" "plan version one" | bash "$HOOK")
-check "agreement holds for the agreed text" "$(printf '%s' "$o" | decision)" ""
+check "agreement holds for the agreed text" "$(printf '%s' "$o" | decision)" "allow"
 o=$(gate sH "$TH" "plan version TWO" | bash "$HOOK")
 check "agreement does not carry to a changed plan" "$(printf '%s' "$o" | decision)" "deny"
 has "and says why" "$(printf '%s' "$o" | reason)" "has changed since"
@@ -245,7 +245,7 @@ has "and hands the decision to the user" "$(printf '%s' "$o" | reason)" "Rounds 
 has "offering to present it as it stands" "$(printf '%s' "$o" | reason)" "$PS_LABEL_ACCEPT"
 answer "$PS_LABEL_ACCEPT" >> "$TL"
 o=$(gate sL "$TL" "long plan" | bash "$HOOK")
-check "choosing to present it as it stands opens the gate" "$(printf '%s' "$o" | decision)" ""
+check "choosing to present it as it stands opens the gate" "$(printf '%s' "$o" | decision)" "allow"
 
 # PS-4: the round is deleted on the way out unless asked to keep it.
 TK="$TMPDIR/tk.jsonl"; : > "$TK"; ups sK plan "$TK" | bash "$HOOK" >/dev/null
@@ -271,6 +271,21 @@ has "the first block calls itself the handover" "$(printf '%s' "$o" | reason)" "
 FAKE_MODE=objections bash "$RUNNER" --epoch "$DN" >/dev/null 2>&1
 o=$(gate sN "$TN" "draft two" | bash "$HOOK")
 hasnt "later blocks do not repeat it" "$(printf '%s' "$o" | reason)" "handover, not a rejection"
+
+# Every gate decision carries a one-line status for the user, allow paths included.
+sysmsg() { jq -r '.systemMessage // ""' 2>/dev/null; }
+TM="$TMPDIR/tm.jsonl"; : > "$TM"; ups sM plan "$TM" | bash "$HOOK" >/dev/null
+answer "$PS_LABEL_DIRECT" >> "$TM"
+o=$(gate sM "$TM" "p" | bash "$HOOK")
+has "allow carries a status message" "$(printf '%s' "$o" | sysmsg)" "plan-sparring"
+TQ="$TMPDIR/tq.jsonl"; : > "$TQ"; ups sQ plan "$TQ" | bash "$HOOK" >/dev/null
+answer "$PS_LABEL_SPAR" >> "$TQ"
+o=$(gate sQ "$TQ" "p" | bash "$HOOK")
+has "the first block says it is the handover" "$(printf '%s' "$o" | sysmsg)" "handing the draft"
+DQ=$(ps_epoch_dir sQ); FAKE_MODE=objections bash "$RUNNER" --epoch "$DQ" >/dev/null 2>&1
+o=$(gate sQ "$TQ" "p revised" | bash "$HOOK")
+has "later blocks report pending recheck" "$(printf '%s' "$o" | sysmsg)" "pending recheck"
+hasnt "and do not call them open" "$(printf '%s' "$o" | sysmsg)" "points open"
 
 echo "== exit codes =="
 for ev in UserPromptSubmit PreToolUse; do

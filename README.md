@@ -25,6 +25,26 @@ write the plan → ExitPlanMode (blocked) → run the command → work the objec
 Calling `ExitPlanMode` is what hands the current draft over, so it is not optional between rounds.
 Running the review twice in a row is refused rather than silently re-reviewing the old draft.
 
+**You can watch it happen.** Every round prints a digest covering both directions, and Claude is
+required to relay it:
+
+```
+plan-sparring · round 2/3 · Codex gpt-5.6-sol medium
+sent   draft, 187 lines (+34 / -7 since round 1)
+       rechecking 3 previously highlighted point(s)
+back   OBJECTIONS — 2 highlighted point(s)
+       - dry-run reports every file as skipped
+       - category dir may be a symlink
+next   work them into the plan, then call ExitPlanMode to hand the revision over
+```
+
+Failures print the same shape with `back FAILED — …`, because a timeout or a dead backend is
+exactly when you most want to know what happened. The outgoing half says *rechecking*, never
+*addressed*: a line delta cannot prove an objection was answered.
+
+Each gate decision also carries a one-line status. The block on a review route is the handover, not
+a rejection — it is how your draft reaches the reviewer at all.
+
 ## Requirements
 
 - Claude Code
@@ -142,7 +162,7 @@ Read these before you rely on it.
 bash tests/run.sh
 ```
 
-70 assertions against a fake backend: no network, no auth, no rate limit. They cover the route
+74 assertions against a fake backend: no network, no auth, no rate limit. They cover the route
 provenance, epoch binding, plan-hash binding, verdict parsing, the failure escape, the timeout,
 and a transcript that has been truncated underneath a running round.
 

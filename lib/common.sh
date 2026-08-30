@@ -91,3 +91,32 @@ ps_route() {
   done
   printf '%s' "$out"
 }
+
+# --- digest helpers ----------------------------------------------------------
+# Line delta between two drafts, as "+n / -m". Empty output means "not available" - the caller
+# degrades the display and never fails a review over it.
+# diff exits 1 for "files differ", which is success here; only >1 is an error. The status has to
+# be captured directly, never through a pipe that would report the pipe's status instead. And the
+# counting starts after the first @@ hunk header, because the "+++ new" file header would
+# otherwise be counted as an added line.
+ps_delta() {
+  local old="$1" new="$2" out st plus minus
+  [ -s "$old" ] && [ -s "$new" ] || return 1
+  command -v diff >/dev/null 2>&1 || return 1
+  out=$(diff -U0 "$old" "$new" 2>/dev/null); st=$?
+  [ "$st" -le 1 ] || return 1
+  plus=$(printf '%s\n' "$out" | awk '/^@@/{h=1;next} h&&/^\+/{n++} END{print n+0}')
+  minus=$(printf '%s\n' "$out" | awk '/^@@/{h=1;next} h&&/^-/{n++} END{print n+0}')
+  printf '+%s / -%s' "$plus" "$minus"
+}
+
+# Up to five one-line points from the reviewer's SUMMARY block, control characters stripped and
+# each line bounded. No block, or an unparseable one, prints nothing - the review still counts.
+ps_headlines() {
+  [ -s "$1" ] || return 1
+  awk '/SUMMARY BEGIN/{h=1;next} /SUMMARY END/{exit} h{print}' "$1" 2>/dev/null \
+    | sed -e 's/^[[:space:]]*[-*][[:space:]]*//' -e 's/[[:cntrl:]]//g' -e 's/[[:space:]]*$//' \
+    | awk 'NF' | head -5 | cut -c1-110
+}
+
+ps_lines() { wc -l < "$1" 2>/dev/null | tr -d ' '; }

@@ -73,9 +73,18 @@ and accepts is a valid answer. If nothing in those classes is left, agree."
 fi
 prompt="$header
 
-Your last non-empty line must be EXACTLY one of these two, with nothing after it:
+Answer in this shape, in this order:
+
+SUMMARY BEGIN
+- one line per point, at most five, each under 100 characters
+SUMMARY END
+
+then whatever detail you want, and your last non-empty line must be EXACTLY one of these two,
+with nothing after it:
 VERDICT: AGREED
 VERDICT: OBJECTIONS
+
+If you agree, use the summary block to say what you checked instead of listing objections.
 
 --- PLAN ---
 $(cat "$dir/plan.md")"
@@ -100,6 +109,29 @@ ps_backend_run() {
 }
 # -----------------------------------------------------------------------------
 
+# Keep the draft we are about to review, so the next round can show what changed. Only the
+# previous one is kept unless the user asked to keep the round - snapshots are full plan texts.
+snap="$dir/plan-$round.md"; cp "$dir/plan.md" "$snap" 2>/dev/null
+prev="$dir/plan-$((round - 1)).md"
+prev_points=$(jq -r '.headlines | length' "$dir/receipt.json" 2>/dev/null || echo 0)
+
+# The outgoing half of the digest. A delta cannot prove objections were addressed, so this says
+# "rechecking", never "addressed".
+sent="sent   draft, $(ps_lines "$snap") lines"
+if [ "$round" -gt 1 ]; then
+  d=$(ps_delta "$prev" "$snap") && sent="$sent ($d since round $((round - 1)))" || sent="$sent (delta unavailable)"
+  [ "$prev_points" -gt 0 ] 2>/dev/null && sent="$sent
+       rechecking $prev_points previously highlighted point(s)"
+fi
+
+digest() {   # $1 = the "back" block, $2 = the "next" line
+  printf '\n%s\n%s\n%s\nnext   %s\n' \
+    "plan-sparring · round $round/$PS_MAX_ROUNDS · $PS_BACKEND_NAME $PS_MODEL $PS_EFFORT" \
+    "$sent" "$1" "$2"
+}
+# Failures used to print nothing but an error, which is exactly when the transcript went dark.
+fail_digest() { digest "back   FAILED — $1" "$2"; ps_fail; die "$1"; }
+
 out="$dir/review-$round.txt"; log="$dir/log-$round.txt"; rm -f "$out"
 printf 'plan-sparring: round %s, asking %s (%s, effort %s, timeout %ss)...\n' "$round" "$PS_BACKEND_NAME" "$PS_MODEL" "$PS_EFFORT" "$PS_TIMEOUT" >&2
 
@@ -117,9 +149,9 @@ done
 wait "$pid" 2>/dev/null; rc=$?
 trap - INT TERM HUP
 
-[ "$timed_out" -eq 1 ] && { ps_fail; die "$PS_BACKEND_NAME did not answer within ${PS_TIMEOUT}s and was killed. Raise PLAN_SPARRING_TIMEOUT, or ask the user how to proceed."; }
-[ "$rc" -ne 0 ] && { ps_fail; tail -5 "$log" 2>/dev/null >&2; die "$PS_BACKEND_NAME exited with status $rc (see above). No receipt was written."; }
-[ -s "$out" ] || { ps_fail; die "$PS_BACKEND_NAME returned an empty review. No receipt was written."; }
+[ "$timed_out" -eq 1 ] && fail_digest "$PS_BACKEND_NAME did not answer within ${PS_TIMEOUT}s and was killed" "raise PLAN_SPARRING_TIMEOUT and run this again, or ask the user how to proceed"
+[ "$rc" -ne 0 ] && { tail -5 "$log" 2>/dev/null >&2; fail_digest "$PS_BACKEND_NAME exited with status $rc" "check the error above, then run this again"; }
+[ -s "$out" ] || fail_digest "$PS_BACKEND_NAME returned an empty review" "run this again; if it repeats, ask the user how to proceed"
 
 # One verdict, as the final non-empty line, exactly as asked for. Anything else - a truncated
 # answer, a service error printed as prose, a stray earlier VERDICT line - is not a review.
@@ -128,31 +160,44 @@ verdict="${verdict#"${verdict%%[![:space:]]*}"}"; verdict="${verdict%"${verdict#
 case "$verdict" in
   "VERDICT: AGREED")     outcome=agreed ;;
   "VERDICT: OBJECTIONS") outcome=objections ;;
-  *) ps_fail; die "$PS_BACKEND_NAME did not end with a verdict line (last line was: ${verdict:-<empty>}). Treating this as a failed review; no receipt was written." ;;
+  *) fail_digest "$PS_BACKEND_NAME did not end with a verdict line (last line: ${verdict:-<empty>})" "run this again; if it repeats, ask the user how to proceed" ;;
 esac
 
-# The epoch must still be the one we reviewed.
 [ "$(cat "$dir/id" 2>/dev/null || true)" = "$epoch_before" ] || die "the planning round changed while $PS_BACKEND_NAME was working; no receipt was written. Call ExitPlanMode again and rerun this."
 [ "$(ps_sha "$dir/plan.md")" = "$sha_before" ] || die "the plan changed while $PS_BACKEND_NAME was working; no receipt was written. Rerun this command to review the current plan."
 
 [ -n "$thread" ] || { thread=$(grep -oE 'session id: [0-9a-fA-F-]{8,}' "$log" 2>/dev/null | tail -1 | awk '{print $3}'); printf '%s' "$thread" > "$dir/thread"; }
 
+points=$(ps_headlines "$out")
+n_points=$(printf '%s' "$points" | awk 'NF' | wc -l | tr -d ' ')
+
 if ! { jq -n --arg e "$epoch_before" --arg b "$PS_BACKEND_NAME" --arg m "$PS_MODEL" \
         --argjson r "$round" --arg ih "$sha_before" --arg o "$outcome" \
-        '{epoch:$e, backend:$b, model:$m, round:$r, input_sha256:$ih, status:"ok", outcome:$o}' \
+        --arg hl "$points" \
+        '{epoch:$e, backend:$b, model:$m, round:$r, input_sha256:$ih, status:"ok", outcome:$o,
+          headlines: ($hl | split("\n") | map(select(length > 0)))}' \
         > "$dir/receipt.json.tmp" && mv -f "$dir/receipt.json.tmp" "$dir/receipt.json"; }; then
   rm -f "$dir/receipt.json.tmp"; ps_fail
   die "the review came back but the receipt could not be written to $dir. Check disk space and permissions."
 fi
 echo 0 > "$dir/fails"
+[ -n "${PLAN_SPARRING_KEEP:-}" ] || rm -f "$dir/plan-$((round - 2)).md" 2>/dev/null
 
-echo "===== $PS_BACKEND_NAME, round $round — outcome: $outcome ====="
-cat "$out"
-[ -n "$(tail -c1 "$out")" ] && echo   # the review may end without a newline
-echo "====="
 if [ "$outcome" = agreed ]; then
-  echo "Receipt written. ExitPlanMode is open for this plan as it stands - change it and the agreement no longer applies."
+  back="back   AGREED"; nxt="call ExitPlanMode - it opens for this plan as it stands"
 else
-  echo "Receipt written, but objections stand. Work through them, then: on the \"$PS_LABEL_PASS\" route call ExitPlanMode; on the \"$PS_LABEL_SPAR\" route run this command again for the next round."
+  back="back   OBJECTIONS — ${n_points:-0} highlighted point(s)"
+  nxt="work them into the plan, then call ExitPlanMode to hand the revision over"
 fi
+[ -n "$points" ] && back="$back
+$(printf '%s\n' "$points" | sed 's/^/       - /')"
+[ -n "$points" ] || back="$back
+       summary unavailable — see the full review below"
+digest "$back" "$nxt"
+echo
+echo "Relay the block above to the user as your status update, in the language of the conversation."
+echo
+echo "----- full review, round $round -----"
+cat "$out"
+[ -n "$(tail -c1 "$out")" ] && echo
 exit 0

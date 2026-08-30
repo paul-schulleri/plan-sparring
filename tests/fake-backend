@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Stand-in for the real CLI so the tests need no network, no auth and no rate limit.
-# FAKE_MODE: agreed | objections | garbage | trailing | fail | empty | hang
+# FAKE_MODE: agreed | objections | garbage | trailing | fail | empty | hang | nosummary | many
 set -uo pipefail
 out=""; prev=""
 for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done
@@ -12,7 +12,9 @@ case "${FAKE_MODE:-agreed}" in
   garbage)  printf 'service unavailable\n' > "$out" ;;
   # An early agreement followed by a real objection: only the LAST line may count.
   trailing) printf 'VERDICT: AGREED\nActually, no.\nVERDICT: OBJECTIONS\n' > "$out" ;;
-  objections) printf 'Point one is wrong.\nVERDICT: OBJECTIONS\n' > "$out" ;;
-  *)     printf 'Looks sound.\nVERDICT: AGREED\n' > "$out" ;;
+  nosummary) printf 'Just prose, no summary block.\nVERDICT: OBJECTIONS\n' > "$out" ;;
+  many) { echo "SUMMARY BEGIN"; for i in 1 2 3 4 5 6 7 8; do echo "- point $i"; done; echo "SUMMARY END"; echo "detail - with a bullet"; echo "VERDICT: OBJECTIONS"; } > "$out" ;;
+  objections) printf 'SUMMARY BEGIN\n- dry-run reports every file as skipped\n- category dir may be a symlink\nSUMMARY END\nDetail here.\nVERDICT: OBJECTIONS\n' > "$out" ;;
+  *)     printf 'SUMMARY BEGIN\n- checked the collision path\nSUMMARY END\nLooks sound.\nVERDICT: AGREED\n' > "$out" ;;
 esac
 exit 0

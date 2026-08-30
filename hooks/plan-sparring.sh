@@ -30,7 +30,10 @@ IFS=$'\t' read -r event sid tp mode <<< "$(printf '%s' "$payload" | jq -r \
 dir=$(ps_epoch_dir "$sid")
 cmd=$(printf '%q --epoch %q' "$PS_HOME/bin/plan-sparring-review" "$dir")
 
-deny() { jq -n --arg r "$1" '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'; exit 0; }
+# $1 is the one-line status: it goes out as systemMessage and opens the reason.
+# say() is the same channel on the allow path - a message with no decision is not an opinion.
+deny() { jq -n --arg m "$1" --arg r "$1 — $2" '{systemMessage:$m, hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'; exit 0; }
+say()  { jq -n --arg m "$1" '{systemMessage:$m}'; exit 0; }
 ask_route() { printf 'Ask exactly one AskUserQuestion with the question "%s" (header "%s") and these labels VERBATIM: "%s", "%s", "%s".' "$PS_QUESTION" "$1" "$PS_LABEL_SPAR" "$PS_LABEL_PASS" "$PS_LABEL_DIRECT"; }
 
 case "$event" in
@@ -86,6 +89,11 @@ counts that command's receipt, so anything else is wasted effort. The loop is:
   work the objections into the plan -> call ExitPlanMode again -> repeat until it opens.
 Calling ExitPlanMode is what hands your current draft over, so never skip it between rounds.
 
+Keep the user in the loop, every round, without being asked: say one short line before you run the
+command ("sending the draft to $PS_BACKEND_NAME, round 2"), and immediately after it relay the
+digest block the command prints - round, what went out, what came back - in the language of the
+conversation. Relay it on failures too. Do not paste the full review; the digest is the point.
+
 Now continue with the actual task.
 TXT
   exit 0
@@ -102,8 +110,11 @@ PreToolUse)
   off=$(cat "$dir/offset" 2>/dev/null || echo 0)
   route=$(ps_route "$tp" "$off")
 
-  [ -z "$route" ] && deny "No plan route has been chosen yet. $(ask_route "Plan route") Then act on the answer and call ExitPlanMode again."
-  case "$route" in direct|accept) exit 0 ;; esac
+  [ -z "$route" ] && deny "plan-sparring · no route chosen yet" "No plan route has been chosen yet. $(ask_route "Plan route") Then act on the answer and call ExitPlanMode again."
+  case "$route" in
+    direct) say "plan-sparring · no external review (your choice)" ;;
+    accept) say "plan-sparring · presenting as it stands (your choice)" ;;
+  esac
 
   # Only now, once a review is actually on the table. ExitPlanMode carries the full plan text, so
   # it never travels through a shell argument - and the hash below covers exactly the bytes the
@@ -118,7 +129,7 @@ PreToolUse)
   [ -s "$dir/plan.md" ] || { [ -s "$pf" ] && cp "$pf" "$dir/plan.md" 2>/dev/null; }
 
   if ! command -v "$PS_BACKEND_BIN" >/dev/null 2>&1; then
-    deny "This plan is on the \"$route\" route, but the \"$PS_BACKEND_BIN\" CLI is not on PATH, so no review can be produced. $(ask_route "Sparring unavailable") Picking \"$PS_LABEL_DIRECT\" switches this plan to the unreviewed route."
+    deny "plan-sparring · $PS_BACKEND_BIN not found on PATH" "This plan is on the \"$route\" route, but the \"$PS_BACKEND_BIN\" CLI is not on PATH, so no review can be produced. $(ask_route "Sparring unavailable") Picking \"$PS_LABEL_DIRECT\" switches this plan to the unreviewed route."
   fi
 
   id=$(cat "$dir/id" 2>/dev/null || true)
@@ -129,32 +140,43 @@ PreToolUse)
 
   if [ -n "$id" ] && [ -n "$repoch" ] && [ "$repoch" = "$id" ] && [ "$status" = "ok" ]; then
     if [ "$route" = "pass" ]; then
-      exit 0                          # one pass, objections expected to be worked in afterwards
+      # one pass, objections expected to be worked in afterwards
+      say "plan-sparring · one $PS_BACKEND_NAME review pass done · opening"
     fi
     if [ "$outcome" = "agreed" ]; then
       # Agreement is about the exact text that was agreed to. On this route the plan is not
       # supposed to change afterwards, so a changed plan means the agreement no longer applies.
-      if [ "$rsha" = "$(ps_sha "$dir/plan.md")" ]; then exit 0; fi
-      deny "$PS_BACKEND_NAME agreed to an earlier version of this plan, but the plan has changed since. Run one more round so the agreement covers what you are about to present: $cmd"
+      if [ "$rsha" = "$(ps_sha "$dir/plan.md")" ]; then
+        say "plan-sparring · $PS_BACKEND_NAME agreed after $(jq -r '.round // 1' "$dir/receipt.json" 2>/dev/null) round(s) · opening"
+      fi
+      deny "plan-sparring · plan changed after agreement · one more round" "$PS_BACKEND_NAME agreed to an earlier version of this plan, but the plan has changed since. Run one more round so the agreement covers what you are about to present: $cmd"
     fi
   fi
 
   rounds=$(jq -r '.round // 0' "$dir/receipt.json" 2>/dev/null || echo 0)
   if [ "$route" = "spar" ] && [ "$rounds" -ge "$PS_MAX_ROUNDS" ] 2>/dev/null; then
-    deny "$PS_BACKEND_NAME has been round $rounds on this plan without agreeing, and an adversarial reviewer will keep finding something. Stop and ask the user how to proceed: one AskUserQuestion with the question \"$PS_QUESTION\" (header \"Rounds used up\") and these labels VERBATIM: \"$PS_LABEL_SPAR\" (keep going), \"$PS_LABEL_ACCEPT\" (present the plan as it stands, unreviewed objections and all), \"$PS_LABEL_DIRECT\". Summarise what is still open in one or two lines first so they can decide."
+    deny "plan-sparring · $rounds rounds, no agreement · your call" "$PS_BACKEND_NAME has been round $rounds on this plan without agreeing, and an adversarial reviewer will keep finding something. Stop and ask the user how to proceed: one AskUserQuestion with the question \"$PS_QUESTION\" (header \"Rounds used up\") and these labels VERBATIM: \"$PS_LABEL_SPAR\" (keep going), \"$PS_LABEL_ACCEPT\" (present the plan as it stands, unreviewed objections and all), \"$PS_LABEL_DIRECT\". Summarise what is still open in one or two lines first so they can decide."
   fi
 
   fails=$(cat "$dir/fails" 2>/dev/null || echo 0)
   if [ "$fails" -ge 2 ] 2>/dev/null; then
-    deny "$PS_BACKEND_NAME failed $fails times in a row for this plan. Do NOT present the plan on your own. $(ask_route "Sparring failed") Add a fourth option \"$PS_LABEL_RETRY\" as the first choice. \"$PS_LABEL_RETRY\" means: run $cmd again. \"$PS_LABEL_DIRECT\" switches this plan to the unreviewed route. The other two labels re-affirm the current route."
+    deny "plan-sparring · $PS_BACKEND_NAME failed $fails times · your call" "$PS_BACKEND_NAME failed $fails times in a row for this plan. Do NOT present the plan on your own. $(ask_route "Sparring failed") Add a fourth option \"$PS_LABEL_RETRY\" as the first choice. \"$PS_LABEL_RETRY\" means: run $cmd again. \"$PS_LABEL_DIRECT\" switches this plan to the unreviewed route. The other two labels re-affirm the current route."
+  fi
+
+  pts=$(jq -r '.headlines | length' "$dir/receipt.json" 2>/dev/null || echo 0)
+  if [ -f "$dir/receipt.json" ]; then
+    # after a revision the points are not "open" - they have not been looked at again yet
+    st="plan-sparring · round $((rounds + 1))/$PS_MAX_ROUNDS · $pts point(s) pending recheck"
+  else
+    st="plan-sparring · handing the draft to $PS_BACKEND_NAME"
   fi
 
   if [ "$route" = "spar" ]; then
     [ -f "$dir/receipt.json" ] || first=" (this first block is the handover, not a rejection: it is how your draft reaches the reviewer)"
-    deny "This plan still needs to be sparred with $PS_BACKEND_NAME.${first:-} Run: $cmd - it hands $PS_BACKEND_NAME the plan, prints the objections, and records the result. Work through every objection (incorporate it, or rebut it in the plan), then call ExitPlanMode again - that is what hands your revised draft over, and you will be pointed at the next round from there. Running the command twice in a row reviews the SAME draft again. ExitPlanMode opens once $PS_BACKEND_NAME returns VERDICT: AGREED for the plan as it then stands. Do not edit or fake the receipt."
+    deny "$st" "This plan still needs to be sparred with $PS_BACKEND_NAME.${first:-} Run: $cmd - it hands $PS_BACKEND_NAME the plan, prints the objections, and records the result. Work through every objection (incorporate it, or rebut it in the plan), then call ExitPlanMode again - that is what hands your revised draft over, and you will be pointed at the next round from there. Running the command twice in a row reviews the SAME draft again. ExitPlanMode opens once $PS_BACKEND_NAME returns VERDICT: AGREED for the plan as it then stands. Do not edit or fake the receipt."
   fi
   [ -f "$dir/receipt.json" ] || first=" (this first block is the handover, not a rejection: it is how your draft reaches the reviewer)"
-  deny "This plan still needs one $PS_BACKEND_NAME review pass.${first:-} Run: $cmd - it hands $PS_BACKEND_NAME the plan, prints the objections, and records the result. Incorporate what it raises (or rebut it in the plan), then call ExitPlanMode again. Do not edit or fake the receipt."
+  deny "$st" "This plan still needs one $PS_BACKEND_NAME review pass.${first:-} Run: $cmd - it hands $PS_BACKEND_NAME the plan, prints the objections, and records the result. Incorporate what it raises (or rebut it in the plan), then call ExitPlanMode again. Do not edit or fake the receipt."
   ;;
 
 esac
