@@ -76,8 +76,8 @@ The plan text never travels through a shell argument: `ExitPlanMode` hands the h
 the hook puts it on disk, and the runner reads it from there.
 
 **If the reviewer will not cooperate** — rate limit, hang, no network — nothing is ever waved
-through on a counter. After repeated failures the gate asks *you*: retry, switch this plan to the
-unreviewed route, or cancel. That question uses the same wording as the first one, so your answer
+through on a counter. After repeated failures the gate asks *you*: **Retry**, switch this plan to
+**Straight from Claude**, or cancel. That question uses the same wording as the first one, so your answer
 actually changes the route rather than disappearing into a dialogue the gate does not recognise.
 You always get to your plan, as a visible decision.
 
