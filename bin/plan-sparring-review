@@ -43,12 +43,17 @@ epoch_before=$(cat "$dir/id" 2>/dev/null || true)
 sha_before=$(ps_sha "$dir/plan.md")
 [ -n "$epoch_before" ] || die "epoch $dir has no id - it looks corrupt; call ExitPlanMode again to open a fresh round"
 
-prev_sha=$(jq -r '.input_sha256 // empty' "$dir/receipt.json" 2>/dev/null || true)
+# One read of the previous receipt, and the exit status decides whether any of it counts.
+# ps_num before the arithmetic: a round of "two", 1.5 or "08" in there is a fatal $(( )) error.
+prev_fields=$(ps_receipt "$dir") || prev_fields=""
+{ read -r _; read -r _; read -r prev_outcome; read -r prev_sha; read -r prev_round
+  read -r prev_points; } <<< "$prev_fields"
+
 if [ -n "$prev_sha" ] && [ "$prev_sha" = "$(ps_sha "$dir/plan.md")" ]; then
   die "this is the same draft that was just reviewed, so a new round would come back saying nothing has changed. Editing the plan file is not enough: call ExitPlanMode again to hand the revised draft over, and you will be pointed back here."
 fi
 
-round=$(( $(jq -r '.round // 0' "$dir/receipt.json" 2>/dev/null || echo 0) + 1 ))
+round=$(( $(ps_num "$prev_round") + 1 ))
 thread=$(cat "$dir/thread" 2>/dev/null || true)
 
 # resume runs in the CURRENT directory, so later rounds must start where round 1 did.
@@ -111,9 +116,13 @@ ps_backend_run() {
 
 # Keep the draft we are about to review, so the next round can show what changed. Only the
 # previous one is kept unless the user asked to keep the round - snapshots are full plan texts.
-snap="$dir/plan-$round.md"; cp "$dir/plan.md" "$snap" 2>/dev/null
+# The rm matters: cp can create the target and then fail part-way through (ENOSPC). A torso left
+# behind is non-empty, so the next round would diff against it and print a WRONG delta instead of
+# degrading to "delta unavailable".
+snap="$dir/plan-$round.md"
+cp "$dir/plan.md" "$snap" 2>/dev/null || { rm -f "$snap"; snap="$dir/plan.md"; }
 prev="$dir/plan-$((round - 1)).md"
-prev_points=$(jq -r '.headlines | length' "$dir/receipt.json" 2>/dev/null || echo 0)
+prev_points=$(ps_num "$prev_points")
 
 # The outgoing half of the digest. A delta cannot prove objections were addressed, so this says
 # "rechecking", never "addressed".

@@ -92,6 +92,38 @@ ps_route() {
   printf '%s' "$out"
 }
 
+# --- the receipt -------------------------------------------------------------
+# One jq call, six lines, one per field. Line-based and deliberately NOT separator-based:
+#  - bash collapses runs of IFS *whitespace*, so one empty field in an @tsv row shifts every
+#    field after it - and a shifted epoch gets compared against the wrong string;
+#  - any other separator, U+001F included, can be written into receipt.json as \uXXXX and then
+#    breaks the field boundary from the inside. A forged {"epoch":"<real-id>ok"} would set
+#    epoch AND status in one go and open the gate.
+# -s is load-bearing too: without slurp, jq streams, so a file like `{...valid...} garbage` gets
+# all six fields printed BEFORE the parse error - the caller would read the real epoch and
+# status=ok out of a corrupt file. With -s nothing runs until the whole input parsed, so a broken
+# file yields no output at all. `length == 1` rejects a file holding several JSON values.
+# Control characters go, so neither a line break nor a terminal escape can travel from the
+# receipt into a systemMessage.
+# No `|| true`: the exit status is half the check, the caller has to see it.
+ps_receipt() {   # $1 = epoch dir -> epoch, status, outcome, input_sha256, round, headline count
+  jq -sr 'if length == 1 then .[0] else {} end
+          | [ (.epoch // ""), (.status // ""), (.outcome // ""), (.input_sha256 // ""),
+              (.round // 0), ((.headlines | arrays | length) // 0) ]
+          | map(tostring | gsub("[[:cntrl:]]"; " ")) | .[]' "$1/receipt.json" 2>/dev/null
+}
+
+# A number out of someone else's file is not a number until it has been checked. The JSON type is
+# not enough: 1.5 and 1e100 are valid JSON numbers and both are a FATAL error inside $(( )), which
+# kills the caller mid-decision - that is the fail-open this exists to prevent. Plain digits are
+# not enough either: 08 and 09 are invalid octal to bash ("value too great for base", also fatal)
+# and 010 would quietly be 8. So filter first, then force base 10. Eight digits or more is 0 as
+# well - a round counter that long is not a number, it is junk.
+ps_num() {
+  case "${1:-}" in ''|*[!0-9]*|????????*) printf 0; return ;; esac
+  printf '%s' "$((10#$1))"
+}
+
 # --- digest helpers ----------------------------------------------------------
 # Line delta between two drafts, as "+n / -m". Empty output means "not available" - the caller
 # degrades the display and never fails a review over it.

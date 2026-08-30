@@ -24,9 +24,14 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 0
 fi
 
-# One jq call, not four: this hook runs on every prompt of every user.
-IFS=$'\t' read -r event sid tp mode <<< "$(printf '%s' "$payload" | jq -r \
-  '[.hook_event_name // "", .session_id // "", .transcript_path // "", .permission_mode // ""] | @tsv' 2>/dev/null)"
+# One jq call, not four: this hook runs on every prompt of every user. One line per field, not
+# @tsv: bash collapses runs of IFS whitespace, and a tab IS IFS whitespace, so an empty
+# transcript_path used to shift permission_mode into tp and leave mode empty - the hook then read
+# "not plan mode" and never armed at all. Control characters are stripped so no field value can
+# fake a line break and shift the rest.
+{ read -r event; read -r sid; read -r tp; read -r mode; } <<< "$(printf '%s' "$payload" | jq -r \
+  '[.hook_event_name // "", .session_id // "", .transcript_path // "", .permission_mode // ""]
+   | map(tostring | gsub("[[:cntrl:]]"; " ")) | .[]' 2>/dev/null)"
 dir=$(ps_epoch_dir "$sid")
 cmd=$(printf '%q --epoch %q' "$PS_HOME/bin/plan-sparring-review" "$dir")
 
@@ -133,10 +138,12 @@ PreToolUse)
   fi
 
   id=$(cat "$dir/id" 2>/dev/null || true)
-  status=$(jq -r '.status // empty' "$dir/receipt.json" 2>/dev/null || true)
-  outcome=$(jq -r '.outcome // empty' "$dir/receipt.json" 2>/dev/null || true)
-  repoch=$(jq -r '.epoch // empty' "$dir/receipt.json" 2>/dev/null || true)
-  rsha=$(jq -r '.input_sha256 // empty' "$dir/receipt.json" 2>/dev/null || true)
+  # One read of the receipt, and the exit status decides whether any of it counts: a missing file
+  # still prints six default lines, so blanking on failure is what keeps the gate closed.
+  fields=$(ps_receipt "$dir") || fields=""
+  { read -r repoch; read -r status; read -r outcome; read -r rsha; read -r rounds; read -r pts
+  } <<< "$fields"
+  rounds=$(ps_num "$rounds"); pts=$(ps_num "$pts")
 
   if [ -n "$id" ] && [ -n "$repoch" ] && [ "$repoch" = "$id" ] && [ "$status" = "ok" ]; then
     if [ "$route" = "pass" ]; then
@@ -147,13 +154,12 @@ PreToolUse)
       # Agreement is about the exact text that was agreed to. On this route the plan is not
       # supposed to change afterwards, so a changed plan means the agreement no longer applies.
       if [ "$rsha" = "$(ps_sha "$dir/plan.md")" ]; then
-        say "plan-sparring · $PS_BACKEND_NAME agreed after $(jq -r '.round // 1' "$dir/receipt.json" 2>/dev/null) round(s) · opening"
+        say "plan-sparring · $PS_BACKEND_NAME agreed after $rounds round(s) · opening"
       fi
       deny "plan-sparring · plan changed after agreement · one more round" "$PS_BACKEND_NAME agreed to an earlier version of this plan, but the plan has changed since. Run one more round so the agreement covers what you are about to present: $cmd"
     fi
   fi
 
-  rounds=$(jq -r '.round // 0' "$dir/receipt.json" 2>/dev/null || echo 0)
   if [ "$route" = "spar" ] && [ "$rounds" -ge "$PS_MAX_ROUNDS" ] 2>/dev/null; then
     deny "plan-sparring · $rounds rounds, no agreement · your call" "$PS_BACKEND_NAME has been round $rounds on this plan without agreeing, and an adversarial reviewer will keep finding something. Stop and ask the user how to proceed: one AskUserQuestion with the question \"$PS_QUESTION\" (header \"Rounds used up\") and these labels VERBATIM: \"$PS_LABEL_SPAR\" (keep going), \"$PS_LABEL_ACCEPT\" (present the plan as it stands, unreviewed objections and all), \"$PS_LABEL_DIRECT\". Summarise what is still open in one or two lines first so they can decide."
   fi
@@ -163,7 +169,6 @@ PreToolUse)
     deny "plan-sparring · $PS_BACKEND_NAME failed $fails times · your call" "$PS_BACKEND_NAME failed $fails times in a row for this plan. Do NOT present the plan on your own. $(ask_route "Sparring failed") Add a fourth option \"$PS_LABEL_RETRY\" as the first choice. \"$PS_LABEL_RETRY\" means: run $cmd again. \"$PS_LABEL_DIRECT\" switches this plan to the unreviewed route. The other two labels re-affirm the current route."
   fi
 
-  pts=$(jq -r '.headlines | length' "$dir/receipt.json" 2>/dev/null || echo 0)
   if [ -f "$dir/receipt.json" ]; then
     # after a revision the points are not "open" - they have not been looked at again yet
     st="plan-sparring · round $((rounds + 1))/$PS_MAX_ROUNDS · $pts point(s) pending recheck"
