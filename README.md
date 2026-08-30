@@ -15,7 +15,15 @@ Shift+Tab  →  "How should this plan be produced?"
 
 On a sparring route, `ExitPlanMode` is denied until a receipt exists for this planning round.
 Claude runs one bundled command, the reviewer's objections are printed straight into the
-conversation, and only then does the plan reach you.
+conversation, and only then does the plan reach you. The loop is:
+
+```
+write the plan → ExitPlanMode (blocked) → run the command → work the objections in
+              → ExitPlanMode again → … → it opens
+```
+
+Calling `ExitPlanMode` is what hands the current draft over, so it is not optional between rounds.
+Running the review twice in a row is refused rather than silently re-reviewing the old draft.
 
 ## Requirements
 
@@ -75,6 +83,12 @@ once run a review.
 The plan text never travels through a shell argument: `ExitPlanMode` hands the hook the full plan,
 the hook puts it on disk, and the runner reads it from there.
 
+**Reviews end.** An adversarial reviewer at full effort will find something in any plan, forever,
+so two things bound it: the reviewer is told to raise only what would cause data loss, a crash, or
+the plan simply not working — not style, not coverage wishes — and after three rounds without
+agreement the gate stops asking for more and puts it to you: keep going, present it as it stands,
+or drop to the unreviewed route.
+
 **If the reviewer will not cooperate** — rate limit, hang, no network — nothing is ever waved
 through on a counter. After repeated failures the gate asks *you*: **Retry**, switch this plan to
 **Straight from Claude**, or cancel. That question uses the same wording as the first one, so your answer
@@ -87,8 +101,10 @@ You always get to your plan, as a visible decision.
 |---|---|---|
 | `PLAN_SPARRING_OFF` | unset | set to anything to disable both hooks |
 | `PLAN_SPARRING_MODEL` | `gpt-5.6-sol` | |
-| `PLAN_SPARRING_EFFORT` | `xhigh` | |
+| `PLAN_SPARRING_EFFORT` | `medium` | `xhigh` for genuinely large plans; it roughly quadruples the wait |
 | `PLAN_SPARRING_TIMEOUT` | `600` | seconds before the reviewer is killed |
+| `PLAN_SPARRING_MAX_ROUNDS` | `3` | after this many rounds without agreement the gate asks you what to do |
+| `PLAN_SPARRING_KEEP` | unset | set to anything to keep the round's artifacts instead of deleting them on the way out |
 
 ## Another vendor
 
@@ -124,7 +140,7 @@ Read these before you rely on it.
 bash tests/run.sh
 ```
 
-60 assertions against a fake backend: no network, no auth, no rate limit. They cover the route
+68 assertions against a fake backend: no network, no auth, no rate limit. They cover the route
 provenance, epoch binding, plan-hash binding, verdict parsing, the failure escape, the timeout,
 and a transcript that has been truncated underneath a running round.
 

@@ -25,7 +25,11 @@ done
 
 [ -n "$dir" ] || die "missing --epoch <dir>"
 [ -d "$dir" ] || die "no such epoch: $dir (the planning round may have ended; call ExitPlanMode again)"
-[ -s "$dir/plan.md" ] || die "no plan recorded in $dir - call ExitPlanMode once so the hook can capture the plan, then run this again"
+if [ ! -s "$dir/plan.md" ]; then
+  pf=$(cat "$dir/planfile" 2>/dev/null || true)
+  [ -n "$pf" ] && die "the captured plan in $dir is empty, and the plan file ($pf) could not be read either. Call ExitPlanMode once and run this again; if it stays empty, report it as a plugin bug."
+  die "no plan captured in $dir yet - call ExitPlanMode once so the hook can capture the current draft, then run this again"
+fi
 command -v "$PS_BACKEND_BIN" >/dev/null 2>&1 || die "\"$PS_BACKEND_BIN\" not found on PATH"
 case "$PS_TIMEOUT" in ''|*[!0-9]*) die "PLAN_SPARRING_TIMEOUT must be a whole number of seconds, got: $PS_TIMEOUT" ;; esac
 [ "$PS_TIMEOUT" -gt 0 ] || die "PLAN_SPARRING_TIMEOUT must be greater than 0"
@@ -39,6 +43,11 @@ epoch_before=$(cat "$dir/id" 2>/dev/null || true)
 sha_before=$(ps_sha "$dir/plan.md")
 [ -n "$epoch_before" ] || die "epoch $dir has no id - it looks corrupt; call ExitPlanMode again to open a fresh round"
 
+prev_sha=$(jq -r '.input_sha256 // empty' "$dir/receipt.json" 2>/dev/null || true)
+if [ -n "$prev_sha" ] && [ "$prev_sha" = "$(ps_sha "$dir/plan.md")" ]; then
+  die "this is the same draft that was just reviewed, so a new round would come back saying nothing has changed. Editing the plan file is not enough: call ExitPlanMode again to hand the revised draft over, and you will be pointed back here."
+fi
+
 round=$(( $(jq -r '.round // 0' "$dir/receipt.json" 2>/dev/null || echo 0) + 1 ))
 thread=$(cat "$dir/thread" 2>/dev/null || true)
 
@@ -47,11 +56,16 @@ if [ "$round" -gt 1 ] && [ -s "$dir/cwd" ]; then cd "$(cat "$dir/cwd")" 2>/dev/n
 [ "$round" -gt 1 ] && [ -z "$thread" ] && printf 'plan-sparring: no thread id from the previous round, starting a fresh conversation.\n' >&2
 
 if [ "$round" -eq 1 ]; then
-  header="You are the sparring partner for a Claude Code implementation plan. Be adversarial: name
-objections, concrete failure modes, and what is missing entirely. Do not rewrite the plan."
+  header="You are the sparring partner for a Claude Code implementation plan. Be adversarial, but
+only about things that would actually hurt: data loss or corruption, a crash or hang, or the plan
+plainly not doing what it says. Do NOT raise style, naming, structure, extra test coverage, or
+\"the plan does not mention X\" unless the omission causes one of those three. Do not rewrite the
+plan. If nothing in those classes is left, agree - even if you would have written it differently."
 else
   header="This is round $round. Here is the plan revised after your previous objections. Say what
-still does not hold. Do not rewrite the plan."
+still does not hold, using the same threshold as before: data loss, crash or hang, or the plan
+plainly not working. New wishes that are not in those classes do not belong here. If nothing in
+those classes is left, agree."
 fi
 prompt="$header
 

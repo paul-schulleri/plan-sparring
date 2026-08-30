@@ -106,11 +106,18 @@ D7=$(ps_epoch_dir s7); answer "$PS_LABEL_SPAR" >> "$T5"
 gate s7 "$T5" "plan seven" | bash "$HOOK" >/dev/null
 FAKE_MODE=objections bash "$RUNNER" --epoch "$D7" >/dev/null 2>&1
 check "objections receipt written" "$(jq -r .outcome "$D7/receipt.json")" "objections"
-o=$(gate s7 "$T5" "plan seven" | bash "$HOOK")
+# Running the runner twice on the SAME draft used to burn a full round and come back with
+# "nothing has changed", which reads like a reviewer failure. It is refused now.
+o=$(FAKE_MODE=objections bash "$RUNNER" --epoch "$D7" 2>&1); rc=$?
+[ "$rc" -ne 0 ] && ok "an unchanged draft is not reviewed twice" || bad "an unchanged draft is not reviewed twice"
+has "and says how to hand the revision over" "$o" "call ExitPlanMode again"
+
+# The real loop: revise, ExitPlanMode (that is what hands the draft over), then the next round.
+o=$(gate s7 "$T5" "plan seven revised" | bash "$HOOK")
 check "spar route with objections -> still deny" "$(printf '%s' "$o" | decision)" "deny"
 FAKE_MODE=agreed bash "$RUNNER" --epoch "$D7" >/dev/null 2>&1
 check "second round counts up" "$(jq -r .round "$D7/receipt.json")" "2"
-o=$(gate s7 "$T5" "plan seven" | bash "$HOOK")
+o=$(gate s7 "$T5" "plan seven revised" | bash "$HOOK")
 check "spar route with agreement -> allow" "$(printf '%s' "$o" | decision)" ""
 
 echo "== runner failures =="
@@ -225,6 +232,35 @@ TD="$TMPDIR/td.jsonl"; : > "$TD"; ups sD plan "$TD" | bash "$HOOK" >/dev/null
 DD=$(ps_epoch_dir sD); answer "$PS_LABEL_DIRECT" >> "$TD"
 gate sD "$TD" "secret plan text" | bash "$HOOK" >/dev/null
 [ -f "$DD/plan.md" ] && bad "direct route writes no plan to disk" || ok "direct route writes no plan to disk"
+
+echo "== field-report fixes =="
+# PS-3: after the round budget the gate stops demanding more and hands the decision back.
+TL="$TMPDIR/tl.jsonl"; : > "$TL"; ups sL plan "$TL" | bash "$HOOK" >/dev/null
+DL=$(ps_epoch_dir sL); answer "$PS_LABEL_SPAR" >> "$TL"
+gate sL "$TL" "long plan" | bash "$HOOK" >/dev/null
+jq -n --arg e "$(cat "$DL/id")" '{epoch:$e,backend:"x",model:"x",round:3,input_sha256:"zzz",status:"ok",outcome:"objections"}' > "$DL/receipt.json"
+o=$(gate sL "$TL" "long plan" | bash "$HOOK")
+check "round budget spent -> still deny" "$(printf '%s' "$o" | decision)" "deny"
+has "and hands the decision to the user" "$(printf '%s' "$o" | reason)" "Rounds used up"
+has "offering to present it as it stands" "$(printf '%s' "$o" | reason)" "$PS_LABEL_ACCEPT"
+answer "$PS_LABEL_ACCEPT" >> "$TL"
+o=$(gate sL "$TL" "long plan" | bash "$HOOK")
+check "choosing to present it as it stands opens the gate" "$(printf '%s' "$o" | decision)" ""
+
+# PS-4: the round is deleted on the way out unless asked to keep it.
+TK="$TMPDIR/tk.jsonl"; : > "$TK"; ups sK plan "$TK" | bash "$HOOK" >/dev/null
+DK=$(ps_epoch_dir sK)
+PLAN_SPARRING_KEEP=1 ups sK default "$TK" | PLAN_SPARRING_KEEP=1 bash "$HOOK" >/dev/null
+[ -d "$DK" ] && ok "PLAN_SPARRING_KEEP preserves the round for inspection" || bad "PLAN_SPARRING_KEEP preserves the round"
+
+# PS-5: tool_input.plan is undocumented, so the plan file has to work as a fallback.
+TP="$TMPDIR/tp.jsonl"; : > "$TP"; ups sP plan "$TP" | bash "$HOOK" >/dev/null
+DP=$(ps_epoch_dir sP); answer "$PS_LABEL_PASS" >> "$TP"
+PF="$TMPDIR/theplan.md"; printf 'plan from the file\n' > "$PF"
+jq -nc --arg s sP --arg t "$TP" --arg f "$PF" \
+  '{hook_event_name:"PreToolUse",session_id:$s,transcript_path:$t,tool_name:"ExitPlanMode",tool_input:{plan:"",planFilePath:$f}}' \
+  | bash "$HOOK" >/dev/null
+check "an empty tool_input.plan falls back to the plan file" "$(cat "$DP/plan.md" 2>/dev/null)" "plan from the file"
 
 echo "== exit codes =="
 for ev in UserPromptSubmit PreToolUse; do
