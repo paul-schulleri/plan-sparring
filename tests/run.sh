@@ -262,6 +262,16 @@ jq -nc --arg s sP --arg t "$TP" --arg f "$PF" \
   | bash "$HOOK" >/dev/null
 check "an empty tool_input.plan falls back to the plan file" "$(cat "$DP/plan.md" 2>/dev/null)" "plan from the file"
 
+# The first block is how the draft reaches the reviewer, not a rejection - the field report read
+# it as a failed step in the log. Later blocks are real "not yet".
+TN="$TMPDIR/tn.jsonl"; : > "$TN"; ups sN plan "$TN" | bash "$HOOK" >/dev/null
+DN=$(ps_epoch_dir sN); answer "$PS_LABEL_PASS" >> "$TN"
+o=$(gate sN "$TN" "draft one" | bash "$HOOK")
+has "the first block calls itself the handover" "$(printf '%s' "$o" | reason)" "handover, not a rejection"
+FAKE_MODE=objections bash "$RUNNER" --epoch "$DN" >/dev/null 2>&1
+o=$(gate sN "$TN" "draft two" | bash "$HOOK")
+hasnt "later blocks do not repeat it" "$(printf '%s' "$o" | reason)" "handover, not a rejection"
+
 echo "== exit codes =="
 for ev in UserPromptSubmit PreToolUse; do
   jq -nc --arg e "$ev" '{hook_event_name:$e,session_id:"s9"}' | bash "$HOOK" >/dev/null 2>&1

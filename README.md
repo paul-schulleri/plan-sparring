@@ -85,7 +85,9 @@ the hook puts it on disk, and the runner reads it from there.
 
 **Reviews end.** An adversarial reviewer at full effort will find something in any plan, forever,
 so two things bound it: the reviewer is told to raise only what would cause data loss, a crash, or
-the plan simply not working — not style, not coverage wishes — and after three rounds without
+the plan simply not working — not style, not coverage wishes. A limitation your plan states openly
+and accepts counts as an answer, so you can narrow the scope instead of building what the reviewer
+asks for. After three rounds without
 agreement the gate stops asking for more and puts it to you: keep going, present it as it stands,
 or drop to the unreviewed route.
 
@@ -140,7 +142,7 @@ Read these before you rely on it.
 bash tests/run.sh
 ```
 
-68 assertions against a fake backend: no network, no auth, no rate limit. They cover the route
+70 assertions against a fake backend: no network, no auth, no rate limit. They cover the route
 provenance, epoch binding, plan-hash binding, verdict parsing, the failure escape, the timeout,
 and a transcript that has been truncated underneath a running round.
 

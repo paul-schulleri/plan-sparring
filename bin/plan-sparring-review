@@ -60,12 +60,16 @@ if [ "$round" -eq 1 ]; then
 only about things that would actually hurt: data loss or corruption, a crash or hang, or the plan
 plainly not doing what it says. Do NOT raise style, naming, structure, extra test coverage, or
 \"the plan does not mention X\" unless the omission causes one of those three. Do not rewrite the
-plan. If nothing in those classes is left, agree - even if you would have written it differently."
+plan. A limitation the plan states openly and accepts - a narrowed scope, a named non-goal - is a
+valid answer to an objection; do not insist it be implemented. If nothing in those classes is left,
+agree, even if you would have written it differently."
 else
   header="This is round $round. Here is the plan revised after your previous objections. Say what
 still does not hold, using the same threshold as before: data loss, crash or hang, or the plan
-plainly not working. New wishes that are not in those classes do not belong here. If nothing in
-those classes is left, agree."
+plainly not working. Check in particular whether the changes made since the last round broke
+something that already worked - a fix for one objection regressing another path is the common
+failure here. New wishes outside those classes do not belong. A limitation the plan states openly
+and accepts is a valid answer. If nothing in those classes is left, agree."
 fi
 prompt="$header
 

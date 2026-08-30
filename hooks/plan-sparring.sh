@@ -70,12 +70,13 @@ UserPromptSubmit)
 
   cat <<TXT
 [plan-sparring] You just entered plan mode. Before anything else, $(ask_route "Plan route")
-  1. "$PS_LABEL_SPAR" - draft the plan, hand it to $PS_BACKEND_NAME for objections, work through
-     them over as many rounds as it takes, present it only once you agree. Sends the plan to
-     another vendor's model.
-  2. "$PS_LABEL_PASS" - one $PS_BACKEND_NAME review, incorporate the objections, then present.
+  "$PS_LABEL_SPAR" - rounds until you agree. Worth the wait when the plan touches data, money,
+     security or concurrency. Sends the plan to another vendor's model.
+  "$PS_LABEL_PASS" - one review, incorporate the objections, present. A good default.
      Sends the plan to another vendor's model.
-  3. "$PS_LABEL_DIRECT" - no external review.
+  "$PS_LABEL_DIRECT" - no external review. Right for small or throwaway work.
+Order them as you see fit and recommend the one that actually fits this task - a trivial job does
+not need rounds of sparring.
 The labels must match exactly; the gate reads them back.
 
 On either review route the work goes through ONE bundled command, which the gate will name when it
@@ -149,9 +150,11 @@ PreToolUse)
   fi
 
   if [ "$route" = "spar" ]; then
-    deny "This plan still needs to be sparred with $PS_BACKEND_NAME. Run: $cmd - it hands $PS_BACKEND_NAME the plan, prints the objections, and records the result. Work through every objection (incorporate it, or rebut it in the plan), then call ExitPlanMode again - that is what hands your revised draft over, and you will be pointed at the next round from there. Running the command twice in a row reviews the SAME draft again. ExitPlanMode opens once $PS_BACKEND_NAME returns VERDICT: AGREED for the plan as it then stands. Do not edit or fake the receipt."
+    [ -f "$dir/receipt.json" ] || first=" (this first block is the handover, not a rejection: it is how your draft reaches the reviewer)"
+    deny "This plan still needs to be sparred with $PS_BACKEND_NAME.${first:-} Run: $cmd - it hands $PS_BACKEND_NAME the plan, prints the objections, and records the result. Work through every objection (incorporate it, or rebut it in the plan), then call ExitPlanMode again - that is what hands your revised draft over, and you will be pointed at the next round from there. Running the command twice in a row reviews the SAME draft again. ExitPlanMode opens once $PS_BACKEND_NAME returns VERDICT: AGREED for the plan as it then stands. Do not edit or fake the receipt."
   fi
-  deny "This plan still needs one $PS_BACKEND_NAME review pass. Run: $cmd - it hands $PS_BACKEND_NAME the plan, prints the objections, and records the result. Incorporate what it raises (or rebut it in the plan), then call ExitPlanMode again. Do not edit or fake the receipt."
+  [ -f "$dir/receipt.json" ] || first=" (this first block is the handover, not a rejection: it is how your draft reaches the reviewer)"
+  deny "This plan still needs one $PS_BACKEND_NAME review pass.${first:-} Run: $cmd - it hands $PS_BACKEND_NAME the plan, prints the objections, and records the result. Incorporate what it raises (or rebut it in the plan), then call ExitPlanMode again. Do not edit or fake the receipt."
   ;;
 
 esac
