@@ -172,7 +172,8 @@ Read these before you rely on it.
 - **The sparring routes send your plan to another vendor's model.** The route question says so.
   Review artifacts, including the plan text, live under `$TMPDIR/plan-sparring/` with mode 600
   until the round ends. On the *Straight from Claude* route the plan is never written down at all.
-  A session that ends while still in plan mode leaves its round behind for the OS to clean up.
+  A session that ends normally takes its round with it. A crash, a `kill`, or an end with
+  `PLAN_SPARRING_OFF` set leaves it for the OS instead.
 - **The hook costs about 25ms on every prompt**, plan mode or not.
 
 ## Tests
@@ -181,7 +182,7 @@ Read these before you rely on it.
 bash tests/run.sh
 ```
 
-146 assertions against a fake backend: no network, no auth, no rate limit. They cover the route
+154 assertions against a fake backend: no network, no auth, no rate limit. They cover the route
 provenance, epoch binding, plan-hash binding, verdict parsing, the failure escape, the timeout,
 a transcript that has been truncated underneath a running round, and every shape of receipt the
 gate must refuse to trust - a round that is not a whole number, a control character smuggled into

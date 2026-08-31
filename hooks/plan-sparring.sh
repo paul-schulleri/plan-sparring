@@ -220,9 +220,22 @@ PreToolUse)
   deny "$st" "This plan still needs one $PS_BACKEND_NAME review pass.${first:-} Run: $cmd - it hands $PS_BACKEND_NAME the plan, prints the objections, and records the result. $rebut Then call ExitPlanMode again. Do not edit or fake the receipt."
   ;;
 
+SessionEnd)
+  # The round's artifacts include the plan text, so a session that ends in plan mode must not leave
+  # them behind. The mode file goes with them: it is written on every prompt and, until now, removed
+  # by nothing at all - one file per session id, kept forever.
+  # $mode is deliberately not consulted: the documented SessionEnd payload does not carry
+  # permission_mode, so "were we planning?" cannot be answered here, and removing what is not there
+  # costs nothing. PLAN_SPARRING_OFF exits long before this, so switching the plugin off keeps the
+  # state it had - the README names that as the limit it is.
+  [ -n "${PLAN_SPARRING_KEEP:-}" ] || rm -rf "$dir" "$(ps_mode_file "$sid")" 2>/dev/null
+  ;;
+
 esac
-# Neither branch matched, so there is nothing to decide: another event, or a payload jq could not
-# parse, which leaves $event empty. The jq-missing path above denies instead, because there it is
-# the plugin's own dependency that is broken. Here it is the caller's payload, and Claude Code
-# always sends valid JSON - a defensive deny would guard a state the caller makes impossible.
+# Both paths that reach here have nothing to decide. SessionEnd is done cleaning up and the session
+# is over, so there is no one left to tell. Otherwise no branch matched: another event, or a payload
+# jq could not parse, which leaves $event empty. The jq-missing path above denies instead, because
+# there it is the plugin's own dependency that is broken. Here it is the caller's payload, and
+# Claude Code always sends valid JSON - a defensive deny would guard a state the caller makes
+# impossible.
 exit 0
