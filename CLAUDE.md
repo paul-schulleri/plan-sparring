@@ -121,8 +121,8 @@ No framework, asserts only, exits non-zero on failure.
   built around that: `forged`, the malformed-receipt fixtures, the epoch and plan-hash binding.
 - Test behaviour, not implementation details. Cover the failure paths, not just the happy one.
 - For a bug fix, reproduce it with an assertion first where practical.
-- Never claim the suite passed without running it. Update the assertion count in `README.md` when it
-  changes.
+- Never claim the suite passed without running it. The assertion count in `README.md` is checked by
+  the suite itself, so it is not yours to remember.
 
 ## Style and lint
 

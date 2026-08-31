@@ -77,8 +77,9 @@ Two hooks, one script, no changes to your `settings.json`.
 | `PreToolUse` on `ExitPlanMode` | Decides whether the plan may be shown. |
 
 An **epoch** is one planning round. It records where the transcript stood when the round began, so
-an answer you gave in an earlier round cannot authorise this one. When a plan is allowed through,
-the epoch and everything in it is deleted.
+an answer you gave in an earlier round cannot authorise this one. It is deleted when you leave plan
+mode — not when a plan is allowed through: if you reject the plan and keep planning, the round you
+already paid for still counts and no fresh review is demanded.
 
 The gate has four outcomes:
 
@@ -117,10 +118,10 @@ comes back then — you are asked once per budget, never once per round, and it 
 entirely.
 
 **If the reviewer will not cooperate** — rate limit, hang, no network — nothing is ever waved
-through on a counter. After repeated failures the gate asks *you*: **Retry**, switch this plan to
-**Straight from Claude**, or cancel. That question uses the same wording as the first one, so your answer
-actually changes the route rather than disappearing into a dialogue the gate does not recognise.
-You always get to your plan, as a visible decision.
+through on a counter. After repeated failures the gate asks *you*: **Retry**, re-affirm the route
+you are on, or switch this plan to **Straight from Claude**. That question uses the same wording as
+the first one, so your answer actually changes the route rather than disappearing into a dialogue
+the gate does not recognise. You always get to your plan, as a visible decision.
 
 ## Configuration
 
@@ -132,6 +133,8 @@ You always get to your plan, as a visible decision.
 | `PLAN_SPARRING_TIMEOUT` | `600` | seconds before the reviewer is killed |
 | `PLAN_SPARRING_MAX_ROUNDS` | `3` | after this many rounds without agreement the gate asks you what to do; *Keep sparring* grants the same number again. Set it high for an effectively unlimited run |
 | `PLAN_SPARRING_KEEP` | unset | set to anything to keep the round's artifacts instead of deleting them on the way out |
+| `PLAN_SPARRING_BIN` | `codex` | which CLI to call. On its own this does **not** make the plugin vendor-agnostic: the arguments are still Codex's. Swapping vendor means editing the two functions in [Another vendor](#another-vendor) |
+| `PLAN_SPARRING_BACKEND_NAME` | `Codex` | what the reviewer is called in the route labels, messages and digest. Change it together with `PLAN_SPARRING_BIN` |
 
 ## Another vendor
 
@@ -178,7 +181,7 @@ Read these before you rely on it.
 bash tests/run.sh
 ```
 
-139 assertions against a fake backend: no network, no auth, no rate limit. They cover the route
+146 assertions against a fake backend: no network, no auth, no rate limit. They cover the route
 provenance, epoch binding, plan-hash binding, verdict parsing, the failure escape, the timeout,
 a transcript that has been truncated underneath a running round, and every shape of receipt the
 gate must refuse to trust - a round that is not a whole number, a control character smuggled into

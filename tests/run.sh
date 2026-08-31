@@ -539,5 +539,10 @@ for ev in UserPromptSubmit PreToolUse; do
   check "$ev never exits non-zero" "$?" "0"
 done
 
+# The number in the README is a fact about this file, so this file checks it. It drifted by 20
+# once already. Deliberately NOT via ok/bad: this check reads $pass and must not count itself.
+grep -q "^$pass assertions" "$ROOT/README.md" \
+  || { printf '  FAIL README assertion count is stale (now %s)\n' "$pass"; fail=$((fail+1)); }
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
