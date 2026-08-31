@@ -11,6 +11,8 @@ PS_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=../lib/common.sh
 . "$PS_HOME/lib/common.sh"
 
+# The opt-out, and the only bare exit on the gate path that is a choice rather than a dead end: a
+# plugin the user switched off must not emit a decision, not even a permissive one.
 [ -n "${PLAN_SPARRING_OFF:-}" ] && exit 0
 
 payload=$(cat)
@@ -66,7 +68,7 @@ UserPromptSubmit)
   rm -rf "$dir" 2>/dev/null
   mkdir -p "$dir" 2>/dev/null || exit 0
   ps_token > "$dir/id"
-  if [ -f "$tp" ]; then wc -c < "$tp" | tr -d ' ' > "$dir/offset"; else echo 0 > "$dir/offset"; fi
+  if [ -f "$tp" ]; then wc -c 2>/dev/null < "$tp" | tr -d ' ' > "$dir/offset"; else echo 0 > "$dir/offset"; fi
 
   if ! command -v "$PS_BACKEND_BIN" >/dev/null 2>&1; then
     # Visible, not silent: "not installed" must be distinguishable from "plugin broken". The
@@ -210,13 +212,17 @@ PreToolUse)
   # Only once a round has come back: on the handover there is nothing to call an edge case yet.
   [ -f "$dir/receipt.json" ] && edge=" If what came back is an edge case of an edge case for what this plan actually covers, say that in the rebuttal instead of hardening further."
 
+  [ -f "$dir/receipt.json" ] || first=" (this first block is the handover, not a rejection: it is how your draft reaches the reviewer)"
+
   if [ "$route" = "spar" ]; then
-    [ -f "$dir/receipt.json" ] || first=" (this first block is the handover, not a rejection: it is how your draft reaches the reviewer)"
     deny "$st" "This plan still needs to be sparred with $PS_BACKEND_NAME.${first:-} Run: $cmd - it hands $PS_BACKEND_NAME the plan, prints the objections, and records the result. $rebut${edge:-} Then call ExitPlanMode again - that is what hands your revised draft over, and you will be pointed at the next round from there. Running the command twice in a row reviews the SAME draft again. ExitPlanMode opens once $PS_BACKEND_NAME returns VERDICT: AGREED for the plan as it then stands. Do not edit or fake the receipt."
   fi
-  [ -f "$dir/receipt.json" ] || first=" (this first block is the handover, not a rejection: it is how your draft reaches the reviewer)"
   deny "$st" "This plan still needs one $PS_BACKEND_NAME review pass.${first:-} Run: $cmd - it hands $PS_BACKEND_NAME the plan, prints the objections, and records the result. $rebut Then call ExitPlanMode again. Do not edit or fake the receipt."
   ;;
 
 esac
+# Neither branch matched, so there is nothing to decide: another event, or a payload jq could not
+# parse, which leaves $event empty. The jq-missing path above denies instead, because there it is
+# the plugin's own dependency that is broken. Here it is the caller's payload, and Claude Code
+# always sends valid JSON - a defensive deny would guard a state the caller makes impossible.
 exit 0

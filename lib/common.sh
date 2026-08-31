@@ -49,7 +49,7 @@ ps_token() {
 ps_records_since() {
   local tp="$1" off="${2:-0}" size
   [ -f "$tp" ] || return 0
-  size=$(wc -c < "$tp" 2>/dev/null | tr -d ' '); [ -n "$size" ] || size=0
+  size=$(wc -c 2>/dev/null < "$tp" | tr -d ' '); [ -n "$size" ] || size=0
   # A truncated or replaced transcript would leave a stale offset past the end of the file and
   # hide every later answer: the gate would deny forever with no way out.
   if [ "$off" -gt "$size" ] 2>/dev/null; then off=0; fi
@@ -78,6 +78,8 @@ ps_route() {
       | select((.input | tostring) | contains($q)) | .id' 2>/dev/null)
   [ -n "$ids" ] || return 0
 
+  # Unquoted on purpose: jq printed one id per line and this splits on them. The ids are hex-and-
+  # dash tool_use ids, so there is nothing here for a glob to match.
   for id in $ids; do
     ans=$(printf '%s\n' "$recs" | jq -Rr --arg id "$id" '
         fromjson? // empty | .message.content[]?

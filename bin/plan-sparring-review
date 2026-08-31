@@ -55,7 +55,7 @@ prev_fields=$(ps_receipt "$dir") || prev_fields=""
 { read -r _; read -r _; read -r prev_outcome; read -r prev_sha; read -r prev_round
   read -r prev_points; } <<< "$prev_fields"
 
-if [ -n "$prev_sha" ] && [ "$prev_sha" = "$(ps_sha "$dir/plan.md")" ]; then
+if [ -n "$prev_sha" ] && [ "$prev_sha" = "$sha_before" ]; then
   die "this is the same draft that was just reviewed, so a new round would come back saying nothing has changed. Editing the plan file is not enough: call ExitPlanMode again to hand the revised draft over, and you will be pointed back here."
 fi
 
