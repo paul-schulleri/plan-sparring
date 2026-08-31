@@ -489,6 +489,17 @@ hasnt "an agreement leaves nothing to recheck" "$o" "rechecking"
 e=$(ps_lines "$TMPDIR/definitely-not-here.md" 2>&1 >/dev/null)
 check "ps_lines is quiet about a missing file" "$e" ""
 
+echo "== the thread id comes from the header, not from the plan =="
+# The log holds the CLI's header AND the echoed prompt, and the prompt holds the plan. A plan that
+# mentions "session id: <hex>" used to hand `tail -1` its own quoted id, and resume then died on a
+# thread that never existed. The existing "thread id captured" assertion cannot see this: it only
+# checks that the file is non-empty, so it stays green with the wrong id.
+TI="$TMPDIR/ti.jsonl"; : > "$TI"; ups sI plan "$TI" | bash "$HOOK" >/dev/null
+DI=$(ps_epoch_dir sI); answer "$PS_LABEL_SPAR" >> "$TI"
+gate sI "$TI" "a plan that quotes session id: 0000dead-beef-0000-0000-000000000002" | bash "$HOOK" >/dev/null
+FAKE_MODE=twoids bash "$RUNNER" --epoch "$DI" >/dev/null 2>&1
+check "the header id wins over one quoted in the plan" "$(cat "$DI/thread" 2>/dev/null)" "0123abcd-dead-beef-0000-000000000001"
+
 echo "== numbers out of somebody else's file =="
 # Every one of these was a FATAL bash error mid-flight. Fatal is the worst outcome here: the
 # runner dies AFTER forking the backend, so no digest, no failure count, no reason on stderr -

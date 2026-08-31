@@ -112,8 +112,12 @@ $(cat "$dir/plan.md")"
 [ "${#prompt}" -lt 200000 ] || die "this plan is too large to send as one argument (${#prompt} bytes). Shorten it, or review it manually."
 
 # --- THE SWAP POINT ----------------------------------------------------------
-# Everything vendor-specific is in this one function. A different vendor means rewriting it and
-# nothing else: the contract around it is plain text in, review on stdout, VERDICT line at the end.
+# The vendor PROTOCOL is these two functions and nothing else. Vendor identity - name, binary,
+# model, effort - is configuration in lib/common.sh, because the hook needs PS_BACKEND_NAME for
+# PS_LABEL_SPAR and never sources this file. A different vendor means rewriting the two functions:
+#   ps_backend_run     prompt as one argument in, review into the -o file, last non-empty line
+#                      exactly "VERDICT: AGREED" or "VERDICT: OBJECTIONS".
+#   ps_backend_thread  the round's log in, the CLI's own conversation id on stdout, or nothing.
 # `exec` matters: it replaces the background subshell with the CLI, so the pid we may have to kill
 # is the CLI itself and not a parent that would leave it orphaned.
 ps_backend_run() {
@@ -125,6 +129,16 @@ ps_backend_run() {
       -c model_reasoning_effort="$PS_EFFORT" -s read-only -o "$out" "$prompt" </dev/null >"$log" 2>&1
   fi
 }
+# Round 2+ should continue the same conversation, and the id's format belongs to the CLI - so
+# reading it belongs here and not in the generic path. Empty output means "no thread": the runner
+# then starts a fresh conversation and says so.
+# The ^ anchor and head -1 are both load-bearing. The CLI writes its header BEFORE the prompt and
+# then the prompt itself into the log - and the prompt contains the plan. A plan that so much as
+# mentions the string "session id: <hex>" used to hand `tail -1` its own quoted id, and `resume`
+# then died from round 2 on against a thread that never existed. The anchor drops the embedded
+# matches; head -1 wins even for a plan whose own line starts that way, because the header is
+# printed first.
+ps_backend_thread() { grep -oE '^session id: [0-9a-fA-F-]{8,}' "$1" 2>/dev/null | head -1 | awk '{print $3}'; }
 # -----------------------------------------------------------------------------
 
 # Keep the draft we are about to review, so the next round can show what changed. Only the
@@ -205,7 +219,7 @@ esac
 [ "$(cat "$dir/id" 2>/dev/null || true)" = "$epoch_before" ] || die "the planning round changed while $PS_BACKEND_NAME was working; no receipt was written. Call ExitPlanMode again and rerun this."
 [ "$(ps_sha "$dir/plan.md")" = "$sha_before" ] || die "the plan changed while $PS_BACKEND_NAME was working; no receipt was written. Rerun this command to review the current plan."
 
-[ -n "$thread" ] || { thread=$(grep -oE 'session id: [0-9a-fA-F-]{8,}' "$log" 2>/dev/null | tail -1 | awk '{print $3}'); printf '%s' "$thread" > "$dir/thread"; }
+[ -n "$thread" ] || { thread=$(ps_backend_thread "$log"); printf '%s' "$thread" > "$dir/thread"; }
 
 points=$(ps_headlines "$out")
 

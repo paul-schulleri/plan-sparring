@@ -11,8 +11,11 @@ conventions that are not obvious from the code.
 - `bin/plan-sparring-review` — hands the plan to the backend, prints the digest, writes the receipt.
 - `lib/common.sh` — the shared contract: backend config, question and label strings, state paths,
   receipt parsing. Anything both sides must agree on lives here exactly once.
-- Vendor-specific code lives **only** in `ps_backend_run()` in `bin/plan-sparring-review`, marked as
-  the swap point. Nothing else knows which CLI is being called.
+- Vendor **identity** — name, binary, model, effort — is configuration in `lib/common.sh`: the hook
+  builds `PS_LABEL_SPAR` from `PS_BACKEND_NAME` and never sources the runner, so it cannot live
+  anywhere else. The vendor **protocol** lives **only** in `ps_backend_run()` and
+  `ps_backend_thread()` in `bin/plan-sparring-review`, marked as the swap point. Nothing outside
+  those two functions knows how the CLI is invoked or how its output is shaped.
 
 ## Goal and priority
 

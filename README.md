@@ -135,10 +135,21 @@ You always get to your plan, as a visible decision.
 
 ## Another vendor
 
-The name says sparring, not Codex, because the reviewer is meant to be replaceable. The contract
-is plain text in, review on stdout, one final line `VERDICT: AGREED` or `VERDICT: OBJECTIONS`,
-receipt out. Everything vendor-specific lives in `ps_backend_run()` in `bin/plan-sparring-review`,
-marked as the swap point. Nothing else knows which CLI is being called.
+The name says sparring, not Codex, because the reviewer is meant to be replaceable. Two functions in
+`bin/plan-sparring-review`, marked as the swap point, are the whole protocol:
+
+| | in | out |
+|---|---|---|
+| `ps_backend_run` | the prompt as one argument | the review, and a last non-empty line of exactly `VERDICT: AGREED` or `VERDICT: OBJECTIONS` |
+| `ps_backend_thread` | the round's log file | the CLI's own conversation id on stdout, or nothing |
+
+The thread id is what lets round 2 continue the same conversation instead of re-explaining
+everything; without one, every round starts fresh and says so. Storing it is the runner's business,
+not the backend's.
+
+Which CLI is being called is *configuration*, not code — `PS_BACKEND_NAME` and `PS_BACKEND_BIN` in
+`lib/common.sh`, because the route label the gate reads back is built from the name. Nothing outside
+those two functions knows how the CLI is invoked or how its output is shaped.
 
 ## Limits
 
@@ -167,7 +178,7 @@ Read these before you rely on it.
 bash tests/run.sh
 ```
 
-119 assertions against a fake backend: no network, no auth, no rate limit. They cover the route
+139 assertions against a fake backend: no network, no auth, no rate limit. They cover the route
 provenance, epoch binding, plan-hash binding, verdict parsing, the failure escape, the timeout,
 a transcript that has been truncated underneath a running round, and every shape of receipt the
 gate must refuse to trust - a round that is not a whole number, a control character smuggled into
