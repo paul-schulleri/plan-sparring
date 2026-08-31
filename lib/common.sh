@@ -170,6 +170,8 @@ ps_delta() {
 # The markers are anchored to a whole line: unanchored, a reviewer that names them in prose
 # ("I'll put the points between SUMMARY BEGIN and SUMMARY END") opened and closed the block on
 # that one line and the real summary below it was never read.
+# The two marker strings are asked for by the prompt in bin/plan-sparring-review; the pair has to
+# match. Left as literals on both sides on purpose - see the anchor reason above.
 ps_headlines() {
   [ -s "$1" ] || return 1
   awk '

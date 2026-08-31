@@ -35,8 +35,8 @@ Two bypasses are deliberate. Do not "fix" them into denials:
 - The epoch directory cannot be created at all → `:113` exits without a decision: there is no state
   to verify against and nothing useful to say.
 
-So the exits are `deny()` and `say()` (`hooks/plan-sparring.sh:40-41`) plus those two bare `exit 0`s.
-A third bare exit needs the same kind of comment those two carry.
+Every decision leaves through `deny()` or `say()`. Every bare `exit 0` carries a comment saying why
+no decision goes out there — that is the rule; do not keep an inventory of them here, it rots.
 
 ## Core principles
 
@@ -45,7 +45,12 @@ Pragmatically, never dogmatically.
 - **KISS** — simple and obvious over clever.
 - **YAGNI** — no design for hypothetical requirements.
 - **DRY** — deduplicate knowledge, not every repeated line. The question strings, labels and state
-  paths are that knowledge, and they live in `lib/common.sh`.
+  paths are that knowledge, and they live in `lib/common.sh`. "State paths" means the directory
+  helpers (`ps_epoch_dir`, `ps_mode_file`); the file names inside an epoch are literals on purpose,
+  because eleven constants for eleven readers buys nothing. And do not extract a shared string when
+  extracting makes the consumer harder to read — the `SUMMARY BEGIN`/`END` markers are built in the
+  runner's prompt and matched by `ps_headlines`, and as an `awk -v` variable they would turn a fixed
+  anchor into a dynamic regex. Cross-reference in both places instead.
 - **Separation of concerns** — the hook decides, the runner talks to the backend, the library holds
   the contract.
 - **Explicit over implicit** — no hidden behaviour, no surprising side effects.
@@ -64,8 +69,12 @@ Pragmatically, never dogmatically.
 
 - Bash 3.2 (macOS system bash). No associative arrays, no `${x^^}`, no `mapfile`, no `&>>`.
 - `set -uo pipefail`, never `set -e`: the gate inspects exit statuses instead of dying on them.
-- Quote every expansion. `local` every function variable and **initialise it** — from bash 4.4 on a
-  bare `local x` leaves it unset and dies under `set -u` (see `more=0` in `ps_route`).
+- Quote every expansion, or say in a comment why not.
+- `local` every function variable, and initialise any that can be **read before it is assigned** —
+  including through a loop or a branch that may not run. From bash 4.4 on a bare `local x` leaves it
+  unset and dies under `set -u` (see `more=0` in `ps_route`). `local x` followed immediately by
+  `x=…` is fine. Never `local x=$(cmd)` when you need the command's exit status: `$?` then reports
+  `local`, not the command.
 - Never put a number from a file or the environment into `$(( ))` unchecked. `1.5`, `1e100` and `08`
   are all fatal there, and a fatal error mid-decision is a fail-open. Run it through `ps_num` first.
 - Multi-field `jq` output is one line per field, never `@tsv`: bash collapses runs of IFS whitespace,
@@ -83,6 +92,11 @@ Pragmatically, never dogmatically.
 Code says what; comments say **why**. Every non-obvious line here names the failure it prevents —
 match that register and that density (`lib/common.sh` is the reference). Do not restate the code.
 Remove a comment that has outlived the code it explains.
+
+This file works the same way: it states prohibitions and the failure each one prevents. It does not
+keep inventories. Anything that counts, or names a line number, belongs in a test or nowhere — the
+only parts of this document that have ever gone stale were the ones describing the code's state
+rather than forbidding something.
 
 ## Simplicity
 

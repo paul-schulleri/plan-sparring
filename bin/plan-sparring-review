@@ -89,6 +89,9 @@ or say concretely why it does not hold - do not restate the point unchanged. Jud
 against the plan's stated scope: if the remaining risk is implausible for what this plan covers,
 agree. If nothing in those classes is left, agree."
 fi
+# The SUMMARY markers below are matched by ps_headlines() in lib/common.sh, anchored to a whole
+# line. Change them here and you must change them there - deliberately not a shared variable: as an
+# awk -v it would turn that fixed anchor into a dynamic regex.
 prompt="$header
 
 Answer in this shape, in this order:
