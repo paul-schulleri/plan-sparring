@@ -24,16 +24,16 @@ Priority: **correctness > simplicity > readability > maintainability > performan
 
 The rule that outranks all of them here: **when the gate cannot verify, it denies.** A missing `jq`,
 an unreadable or unparseable receipt, an epoch that does not match — all deny with a reason the user
-can act on (`hooks/plan-sparring.sh:20-25`, `lib/common.sh:116-121`).
+can act on — the `jq`-missing branch at the top of the hook, and `ps_receipt`.
 
 Two bypasses are deliberate. Do not "fix" them into denials:
 
-- The backend CLI was not on PATH when the round was armed → `hooks/plan-sparring.sh:74` writes a
-  `skip` marker, the user is told once, and the gate steps aside at `:116`. A plugin that blocks
+- The backend CLI was not on PATH when the round was armed → the UserPromptSubmit branch writes a
+  `skip` marker, the user is told once, and the gate steps aside on seeing it. A plugin that blocks
   planning for people who never installed the backend is worse than no plugin. If the CLI disappears
-  *after* arming, that is a different case and does deny (`:151-153`).
-- The epoch directory cannot be created at all → `:113` exits without a decision: there is no state
-  to verify against and nothing useful to say.
+  *after* arming, that is a different case and does deny.
+- The epoch directory cannot be created at all → the gate exits without a decision: there is no
+  state to verify against and nothing useful to say.
 
 Every decision leaves through `deny()` or `say()`. Every bare `exit 0` carries a comment saying why
 no decision goes out there — that is the rule; do not keep an inventory of them here, it rots.
@@ -114,8 +114,8 @@ Runtime set: `bash`, `jq`, the backend CLI, plus the coreutils already assumed (
 
 Adding a fourth runtime dependency is a design change: each one is a new way for the gate to fail,
 and each needs an explicit answer to "what happens when it is missing". The two existing answers are
-the models — `jq` denies with instructions (`hooks/plan-sparring.sh:20-25`) because without it
-nothing can be verified; the backend CLI steps aside with a visible message (`:71-76`) because its
+the models — `jq` denies with instructions because without it nothing can be verified; the backend
+CLI steps aside with a visible message and a `skip` marker because its
 absence is the normal state for someone who never installed it. Silence is not one of the options.
 
 Tests must keep running with no network and no auth — that is what `tests/fake-backend` is for.

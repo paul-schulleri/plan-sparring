@@ -11,8 +11,8 @@ PS_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=../lib/common.sh
 . "$PS_HOME/lib/common.sh"
 
-# The opt-out, and the only bare exit on the gate path that is a choice rather than a dead end: a
-# plugin the user switched off must not emit a decision, not even a permissive one.
+# The opt-out: a plugin the user switched off must not emit a decision at all, not even a
+# permissive one - an allow would still show up as this plugin having had an opinion.
 [ -n "${PLAN_SPARRING_OFF:-}" ] && exit 0
 
 payload=$(cat)
