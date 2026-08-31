@@ -181,8 +181,11 @@ PreToolUse)
     deny "plan-sparring · $rounds rounds, no agreement · your call" "$PS_BACKEND_NAME has been round $rounds on this plan without agreeing, and an adversarial reviewer will keep finding something. Stop and ask the user how to proceed: one AskUserQuestion with the question \"$PS_QUESTION\" (header \"Rounds used up\") and these labels VERBATIM: \"$PS_LABEL_MORE\" (another $step rounds before this question comes back), \"$PS_LABEL_ACCEPT\" (present the plan as it stands, unreviewed objections and all), \"$PS_LABEL_DIRECT\". Name the rounds spent, roughly what each cost, and what the last round actually brought, in one or two lines first so they can decide."
   fi
 
-  fails=$(cat "$dir/fails" 2>/dev/null || echo 0)
-  if [ "$fails" -ge 2 ] 2>/dev/null; then
+  # ps_num and no 2>/dev/null, for the same reason as the round count above: `[ abc -ge 2 ]` FAILS
+  # rather than erroring, and the suppressed error took away the user's only way out of a broken
+  # backend. The realistic corruption is an EMPTY file after an interrupted write, not letters.
+  fails=$(ps_num "$(cat "$dir/fails" 2>/dev/null || true)")
+  if [ "$fails" -ge 2 ]; then
     deny "plan-sparring · $PS_BACKEND_NAME failed $fails times · your call" "$PS_BACKEND_NAME failed $fails times in a row for this plan. Do NOT present the plan on your own. $(ask_route "Sparring failed") Add a fourth option \"$PS_LABEL_RETRY\" as the first choice. \"$PS_LABEL_RETRY\" means: run $cmd again. \"$PS_LABEL_DIRECT\" switches this plan to the unreviewed route. The other two labels re-affirm the current route."
   fi
 

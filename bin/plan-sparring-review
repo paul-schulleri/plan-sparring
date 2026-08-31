@@ -31,10 +31,16 @@ if [ ! -s "$dir/plan.md" ]; then
   die "no plan captured in $dir yet - call ExitPlanMode once so the hook can capture the current draft, then run this again"
 fi
 command -v "$PS_BACKEND_BIN" >/dev/null 2>&1 || die "\"$PS_BACKEND_BIN\" not found on PATH"
-case "$PS_TIMEOUT" in ''|*[!0-9]*) die "PLAN_SPARRING_TIMEOUT must be a whole number of seconds, got: $PS_TIMEOUT" ;; esac
-[ "$PS_TIMEOUT" -gt 0 ] || die "PLAN_SPARRING_TIMEOUT must be greater than 0"
+# ps_num, not a digit filter of its own: `08` survives such a filter and is then FATAL inside the
+# $(( )) of the deadline below - after the backend has been forked, so the runner dies without a
+# digest and leaves the CLI orphaned. The message names PLAN_SPARRING_TIMEOUT because only a value
+# someone set can fail here; the default 600 cannot.
+PS_TIMEOUT=$(ps_num "$PS_TIMEOUT")
+[ "$PS_TIMEOUT" -gt 0 ] || die "PLAN_SPARRING_TIMEOUT must be a whole number of seconds, 1 to 9999999, got: ${PLAN_SPARRING_TIMEOUT:-}"
 
-ps_fail() { echo $(( $(cat "$dir/fails" 2>/dev/null || echo 0) + 1 )) > "$dir/fails"; }
+# ps_num on the way in: junk in this file used to be a FATAL error here, inside fail_digest, so
+# `die` never ran and the reason for the failure never reached the transcript at all.
+ps_fail() { echo $(( $(ps_num "$(cat "$dir/fails" 2>/dev/null || true)") + 1 )) > "$dir/fails"; }
 
 # Snapshot what we are about to review. If the epoch is recycled or the plan replaced while the
 # backend is still thinking, the answer describes a plan that no longer exists and must not be

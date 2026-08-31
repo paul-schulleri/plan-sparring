@@ -489,6 +489,39 @@ hasnt "an agreement leaves nothing to recheck" "$o" "rechecking"
 e=$(ps_lines "$TMPDIR/definitely-not-here.md" 2>&1 >/dev/null)
 check "ps_lines is quiet about a missing file" "$e" ""
 
+echo "== numbers out of somebody else's file =="
+# Every one of these was a FATAL bash error mid-flight. Fatal is the worst outcome here: the
+# runner dies AFTER forking the backend, so no digest, no failure count, no reason on stderr -
+# and the hook dies without emitting a decision at all.
+TT="$TMPDIR/tt.jsonl"; : > "$TT"; ups sT plan "$TT" | bash "$HOOK" >/dev/null
+DT=$(ps_epoch_dir sT); answer "$PS_LABEL_PASS" >> "$TT"
+gate sT "$TT" "plan t" | bash "$HOOK" >/dev/null
+
+# A leading zero is an invalid octal literal inside $(( )), and the deadline is computed there.
+o=$(PLAN_SPARRING_TIMEOUT=08 bash "$RUNNER" --epoch "$DT" 2>&1)
+hasnt "an octal-looking timeout does not kill the runner" "$o" "value too great for base"
+[ -f "$DT/receipt.json" ] && ok "and the round still produces a receipt" || bad "and the round still produces a receipt"
+
+# ...while junk that is no number at all still has to be refused, with our own message.
+echo "plan t revised" > "$DT/plan.md"
+o=$(PLAN_SPARRING_TIMEOUT=abc bash "$RUNNER" --epoch "$DT" 2>&1)
+has "a junk timeout is refused by name" "$o" "PLAN_SPARRING_TIMEOUT must be a whole number"
+
+# ps_fail used to die on a corrupt counter INSIDE fail_digest, so `die` never ran and the reason
+# the backend failed never reached the transcript.
+echo abc > "$DT/fails"; echo "plan t again" > "$DT/plan.md"
+o=$(FAKE_MODE=fail bash "$RUNNER" --epoch "$DT" 2>&1)
+has "a corrupt failure count still reports the real cause" "$o" "exited with status 3"
+hasnt "and does not die on the counter" "$o" "unbound variable"
+
+# `[ 08 -ge 2 ]` is not fatal to bash, so the escape fired - but printed the raw value straight
+# into a systemMessage. Whatever reaches the user has been through ps_num.
+# The receipt goes first: a valid one opens the gate on the pass route before the escape is ever
+# reached, and this test would then pass without exercising anything.
+rm -f "$DT/receipt.json"; echo 08 > "$DT/fails"
+o=$(gate sT "$TT" "plan t again" | bash "$HOOK")
+has "the failure escape counts in base 10" "$(printf '%s' "$o" | sysmsg)" "failed 8 times"
+
 echo "== exit codes =="
 for ev in UserPromptSubmit PreToolUse; do
   jq -nc --arg e "$ev" '{hook_event_name:$e,session_id:"s9"}' | bash "$HOOK" >/dev/null 2>&1
