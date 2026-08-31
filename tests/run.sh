@@ -536,33 +536,43 @@ o=$(gate sT "$TT" "plan t again" | bash "$HOOK")
 has "the failure escape counts in base 10" "$(printf '%s' "$o" | sysmsg)" "failed 8 times"
 
 echo "== SessionEnd =="
+# Session ids not used anywhere above: sE, sK and sO are taken, and a reused id keeps its mode file,
+# so `ups` would hit the "already planning" exit and this section would test another test's leftovers.
 SE="$TMPDIR/se.jsonl"; : > "$SE"
-ups sE plan "$SE" | bash "$HOOK" >/dev/null
-o=$(sess_end sE clear | bash "$HOOK"); check "SessionEnd says nothing" "$o" ""
-[ -d "$(ps_epoch_dir sE)" ] && bad "the round goes when the session ends" || ok "the round goes when the session ends"
-# Never removed by any path before this branch existed: one file per session id, kept forever.
-[ -f "$(ps_mode_file sE)" ] && bad "the mode file goes too" || ok "the mode file goes too"
+ups sEnd1 plan "$SE" | bash "$HOOK" >/dev/null
+D1=$(ps_epoch_dir sEnd1)
+# A receipt that really does open the gate, so the check after the cleanup can discriminate: with
+# nothing to lose, a later "deny" would prove nothing.
+answer "$PS_LABEL_PASS" >> "$SE"
+rcpt "$D1" 1
+o=$(gate sEnd1 "$SE" | bash "$HOOK")
+check "a receipt for this epoch opens the pass route" "$(printf '%s' "$o" | decision)" "allow"
+
+o=$(sess_end sEnd1 clear | bash "$HOOK"); check "SessionEnd says nothing" "$o" ""
+[ -d "$D1" ] && bad "the round goes when the session ends" || ok "the round goes when the session ends"
+# Removed by no path at all before this branch existed: one file per session id, kept forever.
+[ -f "$(ps_mode_file sEnd1)" ] && bad "the mode file goes too" || ok "the mode file goes too"
+# The receipt above opened the gate a moment ago, so if the cleanup had left it behind the gate
+# would still be open. The self-healed epoch gets a FRESH id, and no old receipt matches that.
+o=$(gate sEnd1 "$SE" | bash "$HOOK")
+check "the gate closes again once the round is gone" "$(printf '%s' "$o" | decision)" "deny"
 
 # The inspection path has to survive: KEEP is what the user relies on to look at a round.
-ups sK plan "$SE" | bash "$HOOK" >/dev/null
-PLAN_SPARRING_KEEP=1 sess_end sK | PLAN_SPARRING_KEEP=1 bash "$HOOK" >/dev/null
-[ -d "$(ps_epoch_dir sK)" ] && ok "KEEP keeps the round" || bad "KEEP keeps the round"
-[ -f "$(ps_mode_file sK)" ] && ok "KEEP keeps the mode file" || bad "KEEP keeps the mode file"
+ups sEnd2 plan "$SE" | bash "$HOOK" >/dev/null
+PLAN_SPARRING_KEEP=1 sess_end sEnd2 | PLAN_SPARRING_KEEP=1 bash "$HOOK" >/dev/null
+[ -d "$(ps_epoch_dir sEnd2)" ] && ok "KEEP keeps the round" || bad "KEEP keeps the round"
+[ -f "$(ps_mode_file sEnd2)" ] && ok "KEEP keeps the mode file" || bad "KEEP keeps the mode file"
 
-# Switched off means switched off: the opt-out exits above the branch, and the README says so.
-ups sO plan "$SE" | bash "$HOOK" >/dev/null
-PLAN_SPARRING_OFF=1 sess_end sO | PLAN_SPARRING_OFF=1 bash "$HOOK" >/dev/null
-[ -d "$(ps_epoch_dir sO)" ] && ok "the opt-out keeps the state it had" || bad "the opt-out keeps the state it had"
+# Switched off means switched off: the opt-out exits above this branch, and the README says so.
+ups sEnd3 plan "$SE" | bash "$HOOK" >/dev/null
+o=$(PLAN_SPARRING_OFF=1 sess_end sEnd3 | PLAN_SPARRING_OFF=1 bash "$HOOK")
+check "the opt-out stays silent here too" "$o" ""
+[ -d "$(ps_epoch_dir sEnd3)" ] && ok "the opt-out keeps the round it had" || bad "the opt-out keeps the round it had"
+[ -f "$(ps_mode_file sEnd3)" ] && ok "the opt-out keeps the mode file" || bad "the opt-out keeps the mode file"
 
 # A session that never planned has nothing to clean, and must not trip over that.
-sess_end sNever | bash "$HOOK" >/dev/null 2>&1
+sess_end sEnd4 | bash "$HOOK" >/dev/null 2>&1
 check "SessionEnd without an epoch is a no-op" "$?" "0"
-
-# The one way this branch could open the gate: wipe the state, then let ExitPlanMode through on the
-# self-healed epoch. It cannot - the healed epoch gets a FRESH id, so no old receipt matches it.
-answer "$PS_LABEL_PASS" >> "$SE"
-o=$(gate sE "$SE" | bash "$HOOK")
-check "the gate stays closed after a cleanup" "$(printf '%s' "$o" | decision)" "deny"
 
 echo "== exit codes =="
 for ev in UserPromptSubmit PreToolUse; do

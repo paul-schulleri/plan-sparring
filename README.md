@@ -174,6 +174,9 @@ Read these before you rely on it.
   until the round ends. On the *Straight from Claude* route the plan is never written down at all.
   A session that ends normally takes its round with it. A crash, a `kill`, or an end with
   `PLAN_SPARRING_OFF` set leaves it for the OS instead.
+- **A round does not survive the session it was started in.** Quit while planning and resume, and
+  the route question comes back and the review starts from round one — the round ends when the
+  session does, not when you come back to it.
 - **The hook costs about 25ms on every prompt**, plan mode or not.
 
 ## Tests
@@ -182,7 +185,7 @@ Read these before you rely on it.
 bash tests/run.sh
 ```
 
-154 assertions against a fake backend: no network, no auth, no rate limit. They cover the route
+157 assertions against a fake backend: no network, no auth, no rate limit. They cover the route
 provenance, epoch binding, plan-hash binding, verdict parsing, the failure escape, the timeout,
 a transcript that has been truncated underneath a running round, and every shape of receipt the
 gate must refuse to trust - a round that is not a whole number, a control character smuggled into
