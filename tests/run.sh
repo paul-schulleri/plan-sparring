@@ -11,6 +11,10 @@ RUNNER="$ROOT/bin/plan-sparring-review"
 export TMPDIR; TMPDIR="$(mktemp -d)" || { echo "mktemp failed"; exit 1; }
 [ -d "$TMPDIR" ] && [ -w "$TMPDIR" ] || { echo "test tmpdir unusable"; exit 1; }
 export PLAN_SPARRING_BIN="$HERE/fake-backend"
+# The developer running the suite may have accounts configured for their own use. Inherited,
+# they would turn on the account question for every test that does not expect it and fail the
+# suite on a working plugin. Each account test sets the variable it needs explicitly.
+unset PLAN_SPARRING_ACCOUNTS
 # pgrep below searches every process on the machine, so the marker has to be unique to this run:
 # two suites in a row would otherwise trip over each other's hang.
 export PS_HANG_SECS="9$$"
