@@ -41,7 +41,16 @@ cmd=$(printf '%q --epoch %q' "$PS_HOME/bin/plan-sparring-review" "$dir")
 # say() is the same channel on the allow path - a message with no decision is not an opinion.
 deny() { jq -n --arg m "$1" --arg r "$1 — $2" '{systemMessage:$m, hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'; exit 0; }
 say()  { jq -n --arg m "$1" '{systemMessage:$m}'; exit 0; }
-ask_route() { printf 'Ask exactly one AskUserQuestion with the question "%s" (header "%s") and these labels VERBATIM: "%s", "%s", "%s".' "$PS_QUESTION" "$1" "$PS_LABEL_SPAR" "$PS_LABEL_PASS" "$PS_LABEL_DIRECT"; }
+ask_route() { printf 'Ask exactly one AskUserQuestion with the question "%s" (header "%s") and these labels VERBATIM: "%s", "%s", "%s".%s' "$PS_QUESTION" "$1" "$PS_LABEL_SPAR" "$PS_LABEL_PASS" "$PS_LABEL_DIRECT" "$(ask_account)"; }
+# The second question rides in the SAME AskUserQuestion call, so choosing a route and an account
+# costs the user one dialogue, not two. Nothing at all is asked below two accounts: one configured
+# account needs no choosing, and none means the plugin leaves the CLI's home alone entirely.
+ask_account() {
+  [ "$(ps_account_count)" -ge 2 ] || return 0
+  printf ' In the SAME call, add a second question "%s" (header "Account") with these labels VERBATIM: %s. It picks which %s login reviews the plan and is ignored on the "%s" route; recommend nothing, the user knows which account this work belongs to.' \
+    "$PS_QUESTION_ACCOUNT" "$(ps_account_names | awk '{ printf "%s\"%s\"", (NR > 1 ? ", " : ""), $0 }')" \
+    "$PS_BACKEND_NAME" "$PS_LABEL_DIRECT"
+}
 
 case "$event" in
 
@@ -133,6 +142,18 @@ PreToolUse)
     accept) say "plan-sparring · presenting as it stands (your choice)" ;;
   esac
 
+  # Below the routes that send the plan somewhere, so the direct route still writes nothing down.
+  # With a single account there is nothing to ask and nothing to get wrong; with none configured
+  # acct stays empty, the runner leaves the CLI's home alone, and the receipt carries no account
+  # either - which is what makes the empty string compare equal further down.
+  acct=""; naccts=$(ps_account_count)
+  if [ "$naccts" -ge 2 ]; then
+    acct=$(ps_account_pick "$tp" "$off")
+    [ -n "$acct" ] || deny "plan-sparring · no account chosen yet" "This plan is on the \"$route\" route, but no $PS_BACKEND_NAME account has been chosen for it. $(ask_route "Plan route") Then act on the answer and call ExitPlanMode again."
+  elif [ "$naccts" -eq 1 ]; then
+    acct=$(ps_account_names)
+  fi
+
   # Only now, once a review is actually on the table. ExitPlanMode carries the full plan text, so
   # it never travels through a shell argument - and the hash below covers exactly the bytes the
   # runner will read. On the direct route nothing of the plan is written down at all.
@@ -149,6 +170,10 @@ PreToolUse)
   # extension. Rewritten every time, so switching route mid-epoch heals itself.
   printf '%s' "$route" > "$dir/route" 2>/dev/null
   printf '%s' "$budget" > "$dir/cap" 2>/dev/null
+  # Rewritten every round for the same reason as the route: switching account mid-plan has to heal
+  # itself. The runner refuses to re-review an unchanged draft, but makes an exception when the
+  # account changed - otherwise this switch would deadlock against that refusal.
+  printf '%s' "$acct" > "$dir/account" 2>/dev/null
 
   if ! command -v "$PS_BACKEND_BIN" >/dev/null 2>&1; then
     deny "plan-sparring · $PS_BACKEND_BIN not found on PATH" "This plan is on the \"$route\" route, but the \"$PS_BACKEND_BIN\" CLI is not on PATH, so no review can be produced. $(ask_route "Sparring unavailable") Picking \"$PS_LABEL_DIRECT\" switches this plan to the unreviewed route."
@@ -159,8 +184,15 @@ PreToolUse)
   # still prints six default lines, so blanking on failure is what keeps the gate closed.
   fields=$(ps_receipt "$dir") || fields=""
   { read -r repoch; read -r status; read -r outcome; read -r rsha; read -r rounds; read -r pts
-  } <<< "$fields"
+    read -r racct; } <<< "$fields"
   rounds=$(ps_num "$rounds"); pts=$(ps_num "$pts")
+
+  # A review by another account is not this round's review: the whole point of choosing one is
+  # that the answer comes from it. Named separately from the generic "not reviewed yet" denial
+  # because the fix is different - rerun the same command, it now uses the account you picked.
+  if [ -n "$id" ] && [ "$repoch" = "$id" ] && [ "$status" = "ok" ] && [ "$racct" != "$acct" ]; then
+    deny "plan-sparring · that review came from another account" "This plan was reviewed as \"${racct:-none}\", but this round is on \"${acct:-none}\". Run $cmd again - it uses the account recorded for this round - then call ExitPlanMode again."
+  fi
 
   if [ -n "$id" ] && [ -n "$repoch" ] && [ "$repoch" = "$id" ] && [ "$status" = "ok" ]; then
     if [ "$route" = "pass" ]; then

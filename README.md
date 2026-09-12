@@ -134,7 +134,35 @@ the gate does not recognise. You always get to your plan, as a visible decision.
 | `PLAN_SPARRING_MAX_ROUNDS` | `3` | after this many rounds without agreement the gate asks you what to do; *Keep sparring* grants the same number again. Set it high for an effectively unlimited run |
 | `PLAN_SPARRING_KEEP` | unset | set to anything to keep the round's artifacts instead of deleting them on the way out |
 | `PLAN_SPARRING_BIN` | `codex` | which CLI to call. On its own this does **not** make the plugin vendor-agnostic: the arguments are still Codex's. Swapping vendor means editing the two functions in [Another vendor](#another-vendor) |
+| `PLAN_SPARRING_ACCOUNTS` | unset | one `Name=directory` per line, one per login. Two or more turn on the account question; one is used without asking; unset leaves the CLI's home alone. See [Two accounts](#two-accounts) |
 | `PLAN_SPARRING_BACKEND_NAME` | `Codex` | what the reviewer is called in the route labels, messages and digest. Change it together with `PLAN_SPARRING_BIN` |
+
+## Two accounts
+
+If you have more than one Codex login — work and private, say — the plugin can ask which one
+reviews a given plan, and the gate then holds you to the answer.
+
+Each login lives in its own `CODEX_HOME`, and that is the whole mechanism: the CLI keeps and
+refreshes its own tokens in there, so selecting an account is selecting a directory. This plugin
+never holds a credential.
+
+```
+codex login                                    # the default home, ~/.codex
+CODEX_HOME=~/.codex-private codex login        # a second one, once
+export PLAN_SPARRING_ACCOUNTS="Work=$HOME/.codex
+Private=$HOME/.codex-private"
+```
+
+The route question then carries a second question in the same dialogue, one label per account.
+The answer is recorded for the round and written into the receipt, and the gate compares the two:
+a review that came back from a different account does not open the gate, and it says which account
+answered. Switching account mid-plan is allowed and starts a fresh conversation, because a thread
+belongs to the login that opened it — the same draft is reviewed once more, by the account you
+switched to.
+
+A malformed entry is dropped rather than guessed at, so a typo costs you an option in the dialogue
+instead of a round that cannot be verified. A configured directory that is not there stops the
+round with that message, rather than letting the CLI quietly fall back to another login.
 
 ## Another vendor
 
@@ -151,7 +179,9 @@ everything; without one, every round starts fresh and says so. Storing it is the
 not the backend's.
 
 Which CLI is being called is *configuration*, not code — `PS_BACKEND_NAME` and `PS_BACKEND_BIN` in
-`lib/common.sh`, because the route label the gate reads back is built from the name. Nothing outside
+`lib/common.sh`, because the route label the gate reads back is built from the name. The account
+list is configuration in the same sense; the only vendor-specific part of it, the variable that
+carries the home into the CLI, sits inside `ps_backend_run` with the rest of the protocol. Nothing outside
 those two functions knows how the CLI is invoked or how its output is shaped.
 
 ## Limits
@@ -185,9 +215,10 @@ Read these before you rely on it.
 bash tests/run.sh
 ```
 
-157 assertions against a fake backend: no network, no auth, no rate limit. They cover the route
+198 assertions against a fake backend: no network, no auth, no rate limit. They cover the route
 provenance, epoch binding, plan-hash binding, verdict parsing, the failure escape, the timeout,
-a transcript that has been truncated underneath a running round, and every shape of receipt the
+a transcript that has been truncated underneath a running round, the account binding, and every
+shape of receipt the
 gate must refuse to trust - a round that is not a whole number, a control character smuggled into
 a field, valid JSON with garbage after it.
 

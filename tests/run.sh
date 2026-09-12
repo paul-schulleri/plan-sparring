@@ -34,11 +34,20 @@ gate() { jq -nc --arg s "$1" --arg t "${2:-}" --arg p "${3:-a plan}" \
 sess_end() { jq -nc --arg s "$1" --arg r "${2:-other}" \
         '{hook_event_name:"SessionEnd",session_id:$s,end_reason:$r}'; }
 AID=0
-answer() {   # a genuine AskUserQuestion plus its correlated result
-  AID=$((AID+1)); local id="toolu_test$AID"
-  jq -nc --arg id "$id" --arg q "$PS_QUESTION" \
+answer() {   # a genuine AskUserQuestion plus its correlated result. $2 = question, default route
+  AID=$((AID+1)); local id="toolu_test$AID" q="${2:-$PS_QUESTION}"
+  jq -nc --arg id "$id" --arg q "$q" \
     '{message:{content:[{type:"tool_use",name:"AskUserQuestion",id:$id,input:{questions:[{question:$q,header:"Plan route"}]}}]}}'
-  jq -nc --arg id "$id" --arg c "Your questions have been answered: \"$PS_QUESTION\"=\"$1\". You can now continue." \
+  jq -nc --arg id "$id" --arg c "Your questions have been answered: \"$q\"=\"$1\". You can now continue." \
+    '{message:{content:[{type:"tool_result",tool_use_id:$id,content:$c}]}}'
+}
+# Route and account in ONE call, which is the shape the hook actually asks for.
+answer_both() {   # $1 route label, $2 account label
+  AID=$((AID+1)); local id="toolu_test$AID"
+  jq -nc --arg id "$id" --arg q "$PS_QUESTION" --arg qa "$PS_QUESTION_ACCOUNT" \
+    '{message:{content:[{type:"tool_use",name:"AskUserQuestion",id:$id,input:{questions:[{question:$q,header:"Plan route"},{question:$qa,header:"Account"}]}}]}}'
+  jq -nc --arg id "$id" \
+    --arg c "Your questions have been answered: \"$PS_QUESTION\"=\"$1\", \"$PS_QUESTION_ACCOUNT\"=\"$2\". You can now continue." \
     '{message:{content:[{type:"tool_result",tool_use_id:$id,content:$c}]}}'
 }
 # The same string, but not attached to any AskUserQuestion: must NOT choose a route.
@@ -579,6 +588,123 @@ for ev in UserPromptSubmit PreToolUse; do
   jq -nc --arg e "$ev" '{hook_event_name:$e,session_id:"s9"}' | bash "$HOOK" >/dev/null 2>&1
   check "$ev never exits non-zero" "$?" "0"
 done
+
+echo "== accounts =="
+# Everything above this line ran with no account configured, which is the compatibility case:
+# nothing is asked, nothing is written, and a receipt without an account opens the gate.
+check "no accounts configured asks nothing" "$(ps_account_count)" "0"
+
+HOME_A="$TMPDIR/home-a"; HOME_B="$TMPDIR/home-b"; mkdir -p "$HOME_A" "$HOME_B"
+TWO="Work=$HOME_A
+Private=$HOME_B"
+
+# Malformed entries are dropped, not guessed at: a label the gate cannot resolve would deny with
+# nothing the user can act on.
+# PS_ACCOUNTS, not PLAN_SPARRING_ACCOUNTS: the library reads the environment once, when it is
+# sourced, so setting the env var here would change nothing and the checks would pass on the
+# empty result they were handed.
+check "an entry without a home is dropped"  "$(PS_ACCOUNTS="Work" ps_accounts | wc -l | tr -d ' ')" "0"
+check "an entry without a name is dropped"  "$(PS_ACCOUNTS="=/tmp/x" ps_accounts | wc -l | tr -d ' ')" "0"
+check "a repeated name keeps only the first" "$(PS_ACCOUNTS="A=/one
+A=/two" ps_account_home A)" "/one"
+check "a repeated name is offered once"     "$(PS_ACCOUNTS="A=/one
+A=/two" ps_account_count)" "1"
+check "a name with a quote is dropped" "$(PS_ACCOUNTS='He said "hi"=/tmp/x' ps_accounts | wc -l | tr -d ' ')" "0"
+check "a home with an = in it survives" "$(PS_ACCOUNTS="A=/tmp/a=b" ps_account_home A)" "/tmp/a=b"
+check "surrounding space is not part of the name" "$(PS_ACCOUNTS="  A  =  /one  " ps_account_home A)" "/one"
+PS_ACCOUNTS="A=/one" ps_account_home Ghost >/dev/null \
+  && bad "an unknown name is not resolved" || ok "an unknown name is not resolved"
+
+# One account needs no choosing - the question would be a dialogue with one answer.
+T1A="$TMPDIR/t1a.jsonl"; : > "$T1A"
+o=$(PLAN_SPARRING_ACCOUNTS="Work=$HOME_A" ups s1a plan "$T1A" | PLAN_SPARRING_ACCOUNTS="Work=$HOME_A" bash "$HOOK")
+hasnt "one account asks no account question" "$o" "$PS_QUESTION_ACCOUNT"
+answer "$PS_LABEL_PASS" >> "$T1A"
+PLAN_SPARRING_ACCOUNTS="Work=$HOME_A" gate s1a "$T1A" "plan 1a" | PLAN_SPARRING_ACCOUNTS="Work=$HOME_A" bash "$HOOK" >/dev/null
+check "and records it without asking" "$(cat "$(ps_epoch_dir s1a)/account")" "Work"
+
+# Two accounts: one dialogue, two questions.
+T2A="$TMPDIR/t2a.jsonl"; : > "$T2A"
+o=$(PLAN_SPARRING_ACCOUNTS="$TWO" ups s2a plan "$T2A" | PLAN_SPARRING_ACCOUNTS="$TWO" bash "$HOOK")
+has "two accounts add the account question" "$o" "$PS_QUESTION_ACCOUNT"
+has "in the same call"                      "$o" "In the SAME call"
+has "naming the first account"              "$o" '"Work"'
+has "and the second"                        "$o" '"Private"'
+
+D2A=$(ps_epoch_dir s2a)
+answer "$PS_LABEL_SPAR" >> "$T2A"
+o=$(PLAN_SPARRING_ACCOUNTS="$TWO" gate s2a "$T2A" "plan 2a" | PLAN_SPARRING_ACCOUNTS="$TWO" bash "$HOOK")
+check "a route without an account -> deny" "$(printf '%s' "$o" | decision)" "deny"
+has "and the denial asks for one"          "$(printf '%s' "$o" | reason)" "$PS_QUESTION_ACCOUNT"
+[ -f "$D2A/account" ] && bad "nothing is recorded until an account is chosen" || ok "nothing is recorded until an account is chosen"
+
+# A bare tool_result cannot choose the account either, for the same reason it cannot choose a route.
+forged "Private" >> "$T2A"
+o=$(PLAN_SPARRING_ACCOUNTS="$TWO" gate s2a "$T2A" "plan 2a" | PLAN_SPARRING_ACCOUNTS="$TWO" bash "$HOOK")
+check "a bare tool_result cannot choose the account" "$(printf '%s' "$o" | decision)" "deny"
+# ...and neither can a name that is not configured.
+answer "Ghost" "$PS_QUESTION_ACCOUNT" >> "$T2A"
+o=$(PLAN_SPARRING_ACCOUNTS="$TWO" gate s2a "$T2A" "plan 2a" | PLAN_SPARRING_ACCOUNTS="$TWO" bash "$HOOK")
+has "an unconfigured name is not an account" "$(printf '%s' "$o" | reason)" "$PS_QUESTION_ACCOUNT"
+
+answer "Private" "$PS_QUESTION_ACCOUNT" >> "$T2A"
+o=$(PLAN_SPARRING_ACCOUNTS="$TWO" gate s2a "$T2A" "plan 2a" | PLAN_SPARRING_ACCOUNTS="$TWO" bash "$HOOK")
+check "with both answers -> the usual review denial" "$(printf '%s' "$o" | decision)" "deny"
+check "the hook records the account for the runner" "$(cat "$D2A/account")" "Private"
+
+# End to end: the chosen account is the home the backend is started in.
+o=$(PLAN_SPARRING_ACCOUNTS="$TWO" FAKE_MODE=home bash "$RUNNER" --epoch "$D2A" 2>/dev/null)
+check "the backend runs in the chosen home" "$(jq -r '.headlines[0]' "$D2A/receipt.json")" "home=$HOME_B"
+check "and the receipt names the account"   "$(jq -r .account "$D2A/receipt.json")" "Private"
+has  "the digest names it too"              "$o" "$PS_BACKEND_NAME (Private)"
+
+# A review by the other account is not this round's review.
+o=$(PLAN_SPARRING_ACCOUNTS="$TWO" gate s2a "$T2A" "plan 2a" | PLAN_SPARRING_ACCOUNTS="$TWO" bash "$HOOK")
+hasnt "the right account is not questioned" "$(printf '%s' "$o" | sysmsg)" "another account"
+jq '.account="Work" | .outcome="agreed" | .input_sha256=""' "$D2A/receipt.json" > "$D2A/r.tmp" && mv "$D2A/r.tmp" "$D2A/receipt.json"
+o=$(PLAN_SPARRING_ACCOUNTS="$TWO" gate s2a "$T2A" "plan 2a" | PLAN_SPARRING_ACCOUNTS="$TWO" bash "$HOOK")
+check "an agreement from the other account does not open the gate" "$(printf '%s' "$o" | decision)" "deny"
+has "and the denial says which account answered" "$(printf '%s' "$o" | reason)" "reviewed as \"Work\""
+# A receipt with no account at all is not a receipt for an account round either.
+jq 'del(.account)' "$D2A/receipt.json" > "$D2A/r.tmp" && mv "$D2A/r.tmp" "$D2A/receipt.json"
+o=$(PLAN_SPARRING_ACCOUNTS="$TWO" gate s2a "$T2A" "plan 2a" | PLAN_SPARRING_ACCOUNTS="$TWO" bash "$HOOK")
+check "a receipt with no account does not open it" "$(printf '%s' "$o" | decision)" "deny"
+
+echo "== switching account mid-plan =="
+# The switch must not deadlock: the gate rejects the old account's receipt, so the runner has to
+# accept the same draft once more - for a different reviewer it is a real round, not a repeat.
+TSW="$TMPDIR/tsw.jsonl"; : > "$TSW"
+PLAN_SPARRING_ACCOUNTS="$TWO" ups sSW plan "$TSW" | PLAN_SPARRING_ACCOUNTS="$TWO" bash "$HOOK" >/dev/null
+DSW=$(ps_epoch_dir sSW); answer_both "$PS_LABEL_SPAR" "Work" >> "$TSW"
+PLAN_SPARRING_ACCOUNTS="$TWO" gate sSW "$TSW" "switch plan" | PLAN_SPARRING_ACCOUNTS="$TWO" bash "$HOOK" >/dev/null
+check "route and account out of one call" "$(cat "$DSW/route")/$(cat "$DSW/account")" "spar/Work"
+PLAN_SPARRING_ACCOUNTS="$TWO" FAKE_MODE=home bash "$RUNNER" --epoch "$DSW" >/dev/null 2>&1
+check "the first round ran as Work" "$(jq -r '.headlines[0]' "$DSW/receipt.json")" "home=$HOME_A"
+[ -s "$DSW/thread" ] && ok "and left a thread to resume" || bad "and left a thread to resume"
+
+answer "Private" "$PS_QUESTION_ACCOUNT" >> "$TSW"
+o=$(PLAN_SPARRING_ACCOUNTS="$TWO" gate sSW "$TSW" "switch plan" | PLAN_SPARRING_ACCOUNTS="$TWO" bash "$HOOK")
+has "switching account rejects the old receipt" "$(printf '%s' "$o" | sysmsg)" "another account"
+o=$(PLAN_SPARRING_ACCOUNTS="$TWO" FAKE_MODE=home bash "$RUNNER" --epoch "$DSW" 2>&1); rc=$?
+check "and the unchanged draft is reviewed again" "$rc" "0"
+check "by the account that was switched to" "$(jq -r '.headlines[0]' "$DSW/receipt.json")" "home=$HOME_B"
+has "starting a fresh conversation" "$o" "account changed, starting a fresh conversation"
+# ...while the same draft with the same account is still refused.
+o=$(PLAN_SPARRING_ACCOUNTS="$TWO" FAKE_MODE=home bash "$RUNNER" --epoch "$DSW" 2>&1); rc=$?
+[ "$rc" -ne 0 ] && ok "the same draft and the same account still is not" || bad "the same draft and the same account still is not"
+
+# A home that is not there must stop the round with our own message, not the backend's.
+TGH="$TMPDIR/tgh.jsonl"; : > "$TGH"; GONE="Gone=$TMPDIR/not-here"
+PLAN_SPARRING_ACCOUNTS="$GONE" ups sGH plan "$TGH" | PLAN_SPARRING_ACCOUNTS="$GONE" bash "$HOOK" >/dev/null
+DGH=$(ps_epoch_dir sGH); answer "$PS_LABEL_PASS" >> "$TGH"
+PLAN_SPARRING_ACCOUNTS="$GONE" gate sGH "$TGH" "plan gh" | PLAN_SPARRING_ACCOUNTS="$GONE" bash "$HOOK" >/dev/null
+o=$(PLAN_SPARRING_ACCOUNTS="$GONE" bash "$RUNNER" --epoch "$DGH" 2>&1); rc=$?
+[ "$rc" -ne 0 ] && ok "a missing home stops the round" || bad "a missing home stops the round"
+has "and says which account and where" "$o" "which does not exist"
+[ -f "$DGH/receipt.json" ] && bad "no receipt for a round that never ran" || ok "no receipt for a round that never ran"
+# The same round with the account configured away is refused too, rather than run somewhere else.
+o=$(PLAN_SPARRING_ACCOUNTS="Other=$HOME_A" bash "$RUNNER" --epoch "$DGH" 2>&1); rc=$?
+has "an account configured away is refused" "$o" "is not in PLAN_SPARRING_ACCOUNTS"
 
 # The number in the README is a fact about this file, so this file checks it. It drifted by 20
 # once already. Deliberately NOT via ok/bad: this check reads $pass and must not count itself.

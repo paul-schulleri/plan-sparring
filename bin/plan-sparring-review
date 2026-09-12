@@ -49,13 +49,29 @@ epoch_before=$(cat "$dir/id" 2>/dev/null || true)
 sha_before=$(ps_sha "$dir/plan.md")
 [ -n "$epoch_before" ] || die "epoch $dir has no id - it looks corrupt; call ExitPlanMode again to open a fresh round"
 
+# Written by the hook alongside the plan, so a round that has a plan has an account whenever any
+# is configured. Empty means no account was configured at all: the CLI keeps whichever home it
+# would use on its own, which is what a single-login machine wants.
+account=$(cat "$dir/account" 2>/dev/null || true)
+home=""
+if [ -n "$account" ]; then
+  home=$(ps_account_home "$account") \
+    || die "the account \"$account\" chosen for this round is not in PLAN_SPARRING_ACCOUNTS (any more). Call ExitPlanMode again and pick one that is."
+  # Checked here, before the backend is forked: started against a directory that is not there,
+  # the CLI would either fail with its own message or, worse, fall back to a different login.
+  [ -d "$home" ] || die "the \"$account\" account points at $home, which does not exist. Fix PLAN_SPARRING_ACCOUNTS, or log that account in there."
+fi
+
 # One read of the previous receipt, and the exit status decides whether any of it counts.
 # ps_num before the arithmetic: a round of "two", 1.5 or "08" in there is a fatal $(( )) error.
 prev_fields=$(ps_receipt "$dir") || prev_fields=""
 { read -r _; read -r _; read -r prev_outcome; read -r prev_sha; read -r prev_round
-  read -r prev_points; } <<< "$prev_fields"
+  read -r prev_points; read -r prev_account; } <<< "$prev_fields"
 
-if [ -n "$prev_sha" ] && [ "$prev_sha" = "$sha_before" ]; then
+# Same draft, same account: the round would come back saying nothing has changed. Same draft,
+# DIFFERENT account is a different reviewer and a real round - and refusing it would deadlock
+# against the gate, which denies a receipt from the account the user just switched away from.
+if [ -n "$prev_sha" ] && [ "$prev_sha" = "$sha_before" ] && [ "$prev_account" = "$account" ]; then
   die "this is the same draft that was just reviewed, so a new round would come back saying nothing has changed. Editing the plan file is not enough: call ExitPlanMode again to hand the revised draft over, and you will be pointed back here."
 fi
 
@@ -64,6 +80,13 @@ round=$(( $(ps_num "$prev_round") + 1 ))
 # the more informative of the two, and wrong in no way the user can act on.
 route=$(cat "$dir/route" 2>/dev/null || true)
 thread=$(cat "$dir/thread" 2>/dev/null || true)
+
+# A conversation lives in the account that started it, so a switch cannot resume into it. Dropping
+# the id starts a fresh conversation, which is exactly what the new account needs.
+if [ -n "$thread" ] && [ "$prev_account" != "$account" ]; then
+  thread=""; : > "$dir/thread"
+  printf 'plan-sparring: account changed, starting a fresh conversation.\n' >&2
+fi
 
 # resume runs in the CURRENT directory, so later rounds must start where round 1 did.
 if [ "$round" -gt 1 ] && [ -s "$dir/cwd" ]; then cd "$(cat "$dir/cwd")" 2>/dev/null || true; else printf '%s' "$PWD" > "$dir/cwd"; fi
@@ -125,6 +148,9 @@ $(cat "$dir/plan.md")"
 # is the CLI itself and not a parent that would leave it orphaned.
 ps_backend_run() {
   local out="$1" log="$2"
+  # Which variable carries the account is vendor protocol, so it lives here with the rest of it.
+  # The export is safe because this function only ever runs in the background subshell.
+  [ -z "$home" ] || export CODEX_HOME="$home"
   if [ "$round" -gt 1 ] && [ -n "$thread" ]; then
     exec "$PS_BACKEND_BIN" exec resume --skip-git-repo-check "$thread" -o "$out" "$prompt" </dev/null >"$log" 2>&1
   else
@@ -180,14 +206,14 @@ esac
 secs=0
 digest() {   # $1 = the "back" block, $2 = the "next" line
   printf '\n%s\n%s\n%s\nnext   %s\n' \
-    "plan-sparring · $where · $PS_BACKEND_NAME $PS_MODEL $PS_EFFORT · ${secs}s" \
+    "plan-sparring · $where · $PS_BACKEND_NAME${account:+ ($account)} $PS_MODEL $PS_EFFORT · ${secs}s" \
     "$sent" "$1" "$2"
 }
 # Failures used to print nothing but an error, which is exactly when the transcript went dark.
 fail_digest() { digest "back   FAILED — $1" "$2"; ps_fail; die "$1"; }
 
 out="$dir/review-$round.txt"; log="$dir/log-$round.txt"; rm -f "$out"
-printf 'plan-sparring: round %s, asking %s (%s, effort %s, timeout %ss)...\n' "$round" "$PS_BACKEND_NAME" "$PS_MODEL" "$PS_EFFORT" "$PS_TIMEOUT" >&2
+printf 'plan-sparring: round %s, asking %s%s (%s, effort %s, timeout %ss)...\n' "$round" "$PS_BACKEND_NAME" "${account:+ ($account)}" "$PS_MODEL" "$PS_EFFORT" "$PS_TIMEOUT" >&2
 
 t0=$(date +%s)
 ps_backend_run "$out" "$log" & pid=$!
@@ -228,9 +254,9 @@ points=$(ps_headlines "$out")
 
 if ! { jq -n --arg e "$epoch_before" --arg b "$PS_BACKEND_NAME" --arg m "$PS_MODEL" \
         --argjson r "$round" --arg ih "$sha_before" --arg o "$outcome" \
-        --arg hl "$points" \
-        '{epoch:$e, backend:$b, model:$m, round:$r, input_sha256:$ih, status:"ok", outcome:$o,
-          headlines: ($hl | split("\n") | map(select(length > 0)))}' \
+        --arg hl "$points" --arg ac "$account" \
+        '{epoch:$e, backend:$b, account:$ac, model:$m, round:$r, input_sha256:$ih, status:"ok",
+          outcome:$o, headlines: ($hl | split("\n") | map(select(length > 0)))}' \
         > "$dir/receipt.json.tmp" && mv -f "$dir/receipt.json.tmp" "$dir/receipt.json"; }; then
   rm -f "$dir/receipt.json.tmp"; ps_fail
   die "the review came back but the receipt could not be written to $dir. Check disk space and permissions."

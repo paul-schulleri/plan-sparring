@@ -14,11 +14,49 @@ PS_TIMEOUT="${PLAN_SPARRING_TIMEOUT:-600}"
 # After this many rounds without agreement the gate stops demanding more and asks the user.
 PS_MAX_ROUNDS="${PLAN_SPARRING_MAX_ROUNDS:-3}"
 
+# --- accounts ----------------------------------------------------------------
+# One login per home directory: the CLI keeps and refreshes its own tokens in there, so choosing
+# an account is choosing a directory and nothing else - there is no secret for this plugin to hold.
+# One entry per line, "Name=directory". Empty (the default) means the plugin never touches the
+# CLI's home and the account question is not asked at all, which is what someone with a single
+# login wants. The directory name is the ONLY vendor-specific part; which variable carries it
+# lives in ps_backend_run(), with the rest of the protocol.
+PS_ACCOUNTS="${PLAN_SPARRING_ACCOUNTS:-}"
+
+# The configured accounts as "name<TAB>home" lines. Anything malformed is DROPPED rather than
+# guessed at: a half-understood entry would put a label in front of the user that the gate then
+# cannot resolve, and the round would deny with nothing to act on.
+#  - a name with a double quote in it could not be read back out of the transcript, where the
+#    answer arrives as "question"="label";
+#  - a control character in either field would travel into a systemMessage;
+#  - a repeated name makes the user's answer ambiguous, so only its first entry survives.
+ps_accounts() {
+  printf '%s\n' "$PS_ACCOUNTS" | awk '
+    { i = index($0, "=") ; if (i < 2) next
+      name = substr($0, 1, i - 1); home = substr($0, i + 1)
+      gsub(/^[ \t]+|[ \t]+$/, "", name); gsub(/^[ \t]+|[ \t]+$/, "", home)
+      if (name == "" || home == "") next
+      if (name ~ /"/ || name ~ /[[:cntrl:]]/ || home ~ /[[:cntrl:]]/) next
+      if (seen[name]++) next
+      print name "\t" home }'
+}
+ps_account_names() { ps_accounts | cut -f1; }
+ps_account_count() { ps_accounts | grep -c . ; }
+# The home for a name, or nothing and a non-zero status when the name is not configured - the
+# caller has to be able to tell "not configured" from "configured as the empty string".
+ps_account_home() {
+  ps_accounts | awk -F'\t' -v n="$1" '$1 == n { print $2; found = 1; exit } END { exit !found }'
+}
+
 # --- the question and its labels ---------------------------------------------
 # Every question the plugin asks - including the one after a failure - uses PS_QUESTION verbatim.
 # Only the header differs. A fallback question with its own wording would not be recognised here
 # and the user's escape would silently do nothing.
 PS_QUESTION="How should this plan be produced?"
+# Asked alongside PS_QUESTION whenever more than one account is configured. Deliberately free of
+# PS_BACKEND_NAME: both questions are matched with `grep -o` below, so a backend named "C++" or
+# "gpt.5" would turn the anchor into a regex that matches the wrong thing - or nothing at all.
+PS_QUESTION_ACCOUNT="Which account should review this plan?"
 PS_LABEL_SPAR="Spar with ${PS_BACKEND_NAME}"
 PS_LABEL_PASS="One review pass"
 PS_LABEL_DIRECT="Straight from Claude"
@@ -56,23 +94,18 @@ ps_records_since() {
   tail -c "+$((off + 1))" "$tp" 2>/dev/null
 }
 
-# Which route did the user pick?
+# Every label the user picked in answer to one question, oldest first, one per line.
 #   - only answers AFTER the epoch offset count, so an earlier round cannot authorise this one
-#   - the answer must belong to an actual AskUserQuestion tool call carrying our question, so a
-#     tool that merely PRINTS the answer string cannot choose the route
-#   - labels are compared for equality, not substring
-#   - "Retry" answers are skipped, so the last real route survives a failure dialogue
-#   - the extension label is counted, not just routed: each one buys another round budget
-# $1 transcript, $2 offset -> two lines, the route (spar|pass|direct|accept|empty) and how many
-# times the user asked to keep sparring after the budget ran out
-ps_route() {
-  # more=0 is load-bearing, not decoration: from bash 4.4 on, `local more` leaves the variable
-  # UNSET rather than null, so under the callers' set -u every ordinary route - the ones where no
-  # extension was ever granted - would die on "$more" before printing anything.
-  local recs ids id ans line label out="" more=0
+#   - the answer must belong to an actual AskUserQuestion tool call carrying that question, so a
+#     tool that merely PRINTS the answer string cannot choose anything
+# The question text is used as a grep pattern, which is why both question strings above are kept
+# free of regex metacharacters.
+# $1 transcript, $2 offset, $3 question
+ps_answers() {
+  local recs ids id ans line label
   recs=$(ps_records_since "$1" "$2")
   [ -n "$recs" ] || return 0
-  ids=$(printf '%s\n' "$recs" | jq -Rr --arg q "$PS_QUESTION" '
+  ids=$(printf '%s\n' "$recs" | jq -Rr --arg q "$3" '
       fromjson? // empty | .message.content[]?
       | select(.type == "tool_use" and .name == "AskUserQuestion")
       | select((.input | tostring) | contains($q)) | .id' 2>/dev/null)
@@ -84,21 +117,51 @@ ps_route() {
     ans=$(printf '%s\n' "$recs" | jq -Rr --arg id "$id" '
         fromjson? // empty | .message.content[]?
         | select(.type == "tool_result" and .tool_use_id == $id)
-        | .. | strings' 2>/dev/null | grep -o "${PS_QUESTION}\"=\"[^\"]*\"")
+        | .. | strings' 2>/dev/null | grep -o "$3\"=\"[^\"]*\"")
     while IFS= read -r line; do
       [ -n "$line" ] || continue
       label=${line#*\"=\"}; label=${label%\"}
-      case "$label" in
-        "$PS_LABEL_DIRECT") out=direct ;;
-        "$PS_LABEL_ACCEPT") out=accept ;;
-        "$PS_LABEL_PASS")   out=pass ;;
-        "$PS_LABEL_SPAR")   out=spar ;;
-        "$PS_LABEL_MORE")   out=spar; more=$((more + 1)) ;;
-        *) : ;;   # "Retry", "Cancel planning", free text: leave the current route alone
-      esac
+      printf '%s\n' "$label"
     done <<< "$ans"
   done
+}
+
+# Which route did the user pick?
+#   - labels are compared for equality, not substring
+#   - "Retry" answers are skipped, so the last real route survives a failure dialogue
+#   - the extension label is counted, not just routed: each one buys another round budget
+# $1 transcript, $2 offset -> two lines, the route (spar|pass|direct|accept|empty) and how many
+# times the user asked to keep sparring after the budget ran out
+ps_route() {
+  # more=0 is load-bearing, not decoration: from bash 4.4 on, `local more` leaves the variable
+  # UNSET rather than null, so under the callers' set -u every ordinary route - the ones where no
+  # extension was ever granted - would die on "$more" before printing anything.
+  local label out="" more=0
+  while IFS= read -r label; do
+    case "$label" in
+      "$PS_LABEL_DIRECT") out=direct ;;
+      "$PS_LABEL_ACCEPT") out=accept ;;
+      "$PS_LABEL_PASS")   out=pass ;;
+      "$PS_LABEL_SPAR")   out=spar ;;
+      "$PS_LABEL_MORE")   out=spar; more=$((more + 1)) ;;
+      *) : ;;   # "Retry", "Cancel planning", free text: leave the current route alone
+    esac
+  done <<< "$(ps_answers "$1" "$2" "$PS_QUESTION")"
   printf '%s\n%s\n' "$out" "$more"
+}
+
+# Which account did the user pick? The last answer that names a CONFIGURED account wins; anything
+# else is ignored, exactly as an unknown route label is - a name that was configured away between
+# two rounds must not select a home that no longer exists.
+# $1 transcript, $2 offset -> the account name, or nothing
+ps_account_pick() {
+  local label out=""
+  while IFS= read -r label; do
+    [ -n "$label" ] || continue
+    ps_account_home "$label" >/dev/null || continue
+    out="$label"
+  done <<< "$(ps_answers "$1" "$2" "$PS_QUESTION_ACCOUNT")"
+  printf '%s' "$out"
 }
 
 # --- the receipt -------------------------------------------------------------
@@ -115,10 +178,10 @@ ps_route() {
 # Control characters go, so neither a line break nor a terminal escape can travel from the
 # receipt into a systemMessage.
 # No `|| true`: the exit status is half the check, the caller has to see it.
-ps_receipt() {   # $1 = epoch dir -> epoch, status, outcome, input_sha256, round, headline count
+ps_receipt() {   # $1 = epoch dir -> epoch, status, outcome, input_sha256, round, headlines, account
   jq -sr 'if length == 1 then .[0] else {} end
           | [ (.epoch // ""), (.status // ""), (.outcome // ""), (.input_sha256 // ""),
-              (.round // 0), ((.headlines | arrays | length) // 0) ]
+              (.round // 0), ((.headlines | arrays | length) // 0), (.account // "") ]
           | map(tostring | gsub("[[:cntrl:]]"; " ")) | .[]' "$1/receipt.json" 2>/dev/null
 }
 

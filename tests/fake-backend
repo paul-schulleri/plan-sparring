@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Stand-in for the real CLI so the tests need no network, no auth and no rate limit.
 # FAKE_MODE: agreed | objections | garbage | trailing | fail | empty | hang | nosummary | many
-#            | prosemarker | longutf8 | twoids
+#            | prosemarker | longutf8 | twoids | home
 set -uo pipefail
 out=""; prev=""
 for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done
@@ -23,6 +23,8 @@ case "${FAKE_MODE:-agreed}" in
   # session id puts a second, WRONG one further down. Only the header line counts.
   twoids) echo 'tests/fake-backend:8:echo "session id: 0000dead-beef-0000-0000-000000000002"'
           printf 'SUMMARY BEGIN\n- x\nSUMMARY END\nVERDICT: OBJECTIONS\n' > "$out" ;;
+  # Reports back which home it was started with, so the account wiring can be asserted end to end.
+  home) printf 'SUMMARY BEGIN\n- home=%s\nSUMMARY END\nVERDICT: OBJECTIONS\n' "${CODEX_HOME:-none}" > "$out" ;;
   objections) printf 'SUMMARY BEGIN\n- dry-run reports every file as skipped\n- category dir may be a symlink\nSUMMARY END\nDetail here.\nVERDICT: OBJECTIONS\n' > "$out" ;;
   *)     printf 'SUMMARY BEGIN\n- checked the collision path\nSUMMARY END\nLooks sound.\nVERDICT: AGREED\n' > "$out" ;;
 esac
