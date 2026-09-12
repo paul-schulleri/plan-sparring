@@ -689,6 +689,7 @@ o=$(PLAN_SPARRING_ACCOUNTS="$TWO" FAKE_MODE=home bash "$RUNNER" --epoch "$DSW" 2
 check "and the unchanged draft is reviewed again" "$rc" "0"
 check "by the account that was switched to" "$(jq -r '.headlines[0]' "$DSW/receipt.json")" "home=$HOME_B"
 has "starting a fresh conversation" "$o" "account changed, starting a fresh conversation"
+hasnt "and does not also blame a missing thread id" "$o" "no thread id from the previous round"
 # ...while the same draft with the same account is still refused.
 o=$(PLAN_SPARRING_ACCOUNTS="$TWO" FAKE_MODE=home bash "$RUNNER" --epoch "$DSW" 2>&1); rc=$?
 [ "$rc" -ne 0 ] && ok "the same draft and the same account still is not" || bad "the same draft and the same account still is not"

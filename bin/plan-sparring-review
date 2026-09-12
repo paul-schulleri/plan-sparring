@@ -83,14 +83,15 @@ thread=$(cat "$dir/thread" 2>/dev/null || true)
 
 # A conversation lives in the account that started it, so a switch cannot resume into it. Dropping
 # the id starts a fresh conversation, which is exactly what the new account needs.
+switched=0
 if [ -n "$thread" ] && [ "$prev_account" != "$account" ]; then
-  thread=""; : > "$dir/thread"
+  thread=""; : > "$dir/thread"; switched=1
   printf 'plan-sparring: account changed, starting a fresh conversation.\n' >&2
 fi
 
 # resume runs in the CURRENT directory, so later rounds must start where round 1 did.
 if [ "$round" -gt 1 ] && [ -s "$dir/cwd" ]; then cd "$(cat "$dir/cwd")" 2>/dev/null || true; else printf '%s' "$PWD" > "$dir/cwd"; fi
-[ "$round" -gt 1 ] && [ -z "$thread" ] && printf 'plan-sparring: no thread id from the previous round, starting a fresh conversation.\n' >&2
+[ "$round" -gt 1 ] && [ -z "$thread" ] && [ "$switched" -eq 0 ] && printf 'plan-sparring: no thread id from the previous round, starting a fresh conversation.\n' >&2
 
 if [ "$round" -eq 1 ]; then
   header="You are the sparring partner for a Claude Code implementation plan. Be adversarial, but

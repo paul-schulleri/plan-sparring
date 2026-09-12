@@ -215,7 +215,7 @@ Read these before you rely on it.
 bash tests/run.sh
 ```
 
-198 assertions against a fake backend: no network, no auth, no rate limit. They cover the route
+199 assertions against a fake backend: no network, no auth, no rate limit. They cover the route
 provenance, epoch binding, plan-hash binding, verdict parsing, the failure escape, the timeout,
 a transcript that has been truncated underneath a running round, the account binding, and every
 shape of receipt the
