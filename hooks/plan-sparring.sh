@@ -212,7 +212,7 @@ PreToolUse)
   # No 2>/dev/null any more: both operands are ps_num-clean, and the redirect used to hide
   # `[ 3 -ge abc ]` failing on a typo'd PLAN_SPARRING_MAX_ROUNDS - which removed the cap entirely.
   if [ "$route" = "spar" ] && [ "$rounds" -ge "$budget" ]; then
-    deny "plan-sparring · $rounds rounds, no agreement · your call" "$PS_BACKEND_NAME has been round $rounds on this plan without agreeing, and an adversarial reviewer will keep finding something. Stop and ask the user how to proceed: one AskUserQuestion with the question \"$PS_QUESTION\" (header \"Rounds used up\") and these labels VERBATIM: \"$PS_LABEL_MORE\" (another $step rounds before this question comes back), \"$PS_LABEL_ACCEPT\" (present the plan as it stands, unreviewed objections and all), \"$PS_LABEL_DIRECT\". Name the rounds spent, roughly what each cost, and what the last round actually brought, in one or two lines first so they can decide."
+    deny "plan-sparring · $rounds rounds, no agreement · your call" "$rounds review rounds are complete and $PS_BACKEND_NAME still has objections. Stop and ask the user whether to continue for another $step rounds or consciously present the current plan with those objections: one AskUserQuestion with the question \"$PS_QUESTION\" (header \"Rounds used up\") and these labels VERBATIM: \"$PS_LABEL_MORE\", \"$PS_LABEL_ACCEPT\". Name the rounds spent, roughly what each cost, and what the last round actually brought, in one or two lines first so they can decide."
   fi
 
   # ps_num and no 2>/dev/null, for the same reason as the round count above: `[ abc -ge 2 ]` FAILS

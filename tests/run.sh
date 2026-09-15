@@ -72,6 +72,7 @@ T="$TMPDIR/t1.jsonl"; : > "$T"
 o=$(ups s1 plan "$T" | bash "$HOOK")
 has "entering plan mode asks the route" "$o" "$PS_QUESTION"
 has "offers the spar label verbatim" "$o" "$PS_LABEL_SPAR"
+has "initial route still offers the unreviewed route" "$o" "$PS_LABEL_DIRECT"
 [ -d "$(ps_epoch_dir s1)" ] && ok "epoch created" || bad "epoch created"
 o=$(ups s1 plan "$T" | bash "$HOOK"); check "second prompt in plan mode is silent" "$o" ""
 o=$(ups s1 default "$T" | bash "$HOOK"); o=$(ups s1 plan "$T" | bash "$HOOK")
@@ -267,6 +268,7 @@ o=$(gate sL "$TL" "long plan" | bash "$HOOK")
 check "round budget spent -> still deny" "$(printf '%s' "$o" | decision)" "deny"
 has "and hands the decision to the user" "$(printf '%s' "$o" | reason)" "Rounds used up"
 has "offering to present it as it stands" "$(printf '%s' "$o" | reason)" "$PS_LABEL_ACCEPT"
+hasnt "and no longer offers the unreviewed route" "$(printf '%s' "$o" | reason)" "$PS_LABEL_DIRECT"
 answer "$PS_LABEL_ACCEPT" >> "$TL"
 o=$(gate sL "$TL" "long plan" | bash "$HOOK")
 check "choosing to present it as it stands opens the gate" "$(printf '%s' "$o" | decision)" "allow"

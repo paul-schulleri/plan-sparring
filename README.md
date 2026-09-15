@@ -112,10 +112,10 @@ asks for. Rebutting is the other half of the loop and Claude is told to treat it
 a point it does not accept goes into the plan under `## Rebuttals`, and the reviewer is asked to
 weigh the rebuttal rather than repeat itself. A `## Scope` section naming what the plan
 deliberately leaves out is checked against, not counted as a gap. After three rounds without
-agreement the gate stops asking for more and puts it to you: **Keep sparring**, present it as it
-stands, or drop to the unreviewed route. Keeping on grants another three rounds and the question
-comes back then — you are asked once per budget, never once per round, and it never disappears
-entirely.
+agreement the gate stops asking for more and puts it to you: **Keep sparring**, or present it as it
+stands with the remaining objections consciously accepted. Keeping on grants another three rounds
+and the question comes back then — you are asked once per budget, never once per round, and it
+never disappears entirely.
 
 **If the reviewer will not cooperate** — rate limit, hang, no network — nothing is ever waved
 through on a counter. After repeated failures the gate asks *you*: **Retry**, re-affirm the route
@@ -215,7 +215,7 @@ Read these before you rely on it.
 bash tests/run.sh
 ```
 
-199 assertions against a fake backend: no network, no auth, no rate limit. They cover the route
+201 assertions against a fake backend: no network, no auth, no rate limit. They cover the route
 provenance, epoch binding, plan-hash binding, verdict parsing, the failure escape, the timeout,
 a transcript that has been truncated underneath a running round, the account binding, and every
 shape of receipt the
