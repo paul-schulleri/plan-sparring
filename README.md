@@ -153,7 +153,8 @@ export PLAN_SPARRING_ACCOUNTS="Work=$HOME/.codex
 Private=$HOME/.codex-private"
 ```
 
-The route question then carries a second question in the same dialogue, one label per account.
+After a review route is picked, a follow-up question asks for the account, one label per account.
+"Straight from Claude" sends nothing out and asks nothing more.
 The answer is recorded for the round and written into the receipt, and the gate compares the two:
 a review that came back from a different account does not open the gate, and it says which account
 answered. Switching account mid-plan is allowed and starts a fresh conversation, because a thread
@@ -215,7 +216,7 @@ Read these before you rely on it.
 bash tests/run.sh
 ```
 
-201 assertions against a fake backend: no network, no auth, no rate limit. They cover the route
+205 assertions against a fake backend: no network, no auth, no rate limit. They cover the route
 provenance, epoch binding, plan-hash binding, verdict parsing, the failure escape, the timeout,
 a transcript that has been truncated underneath a running round, the account binding, and every
 shape of receipt the

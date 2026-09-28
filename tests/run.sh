@@ -45,7 +45,8 @@ answer() {   # a genuine AskUserQuestion plus its correlated result. $2 = questi
   jq -nc --arg id "$id" --arg c "Your questions have been answered: \"$q\"=\"$1\". You can now continue." \
     '{message:{content:[{type:"tool_result",tool_use_id:$id,content:$c}]}}'
 }
-# Route and account in ONE call, which is the shape the hook actually asks for.
+# Route and account in ONE call. The hook asks for the account as a follow-up, but a bundled
+# answer is still a genuine answer and must keep working.
 answer_both() {   # $1 route label, $2 account label
   AID=$((AID+1)); local id="toolu_test$AID"
   jq -nc --arg id "$id" --arg q "$PS_QUESTION" --arg qa "$PS_QUESTION_ACCOUNT" \
@@ -629,19 +630,29 @@ answer "$PS_LABEL_PASS" >> "$T1A"
 PLAN_SPARRING_ACCOUNTS="Work=$HOME_A" gate s1a "$T1A" "plan 1a" | PLAN_SPARRING_ACCOUNTS="Work=$HOME_A" bash "$HOOK" >/dev/null
 check "and records it without asking" "$(cat "$(ps_epoch_dir s1a)/account")" "Work"
 
-# Two accounts: one dialogue, two questions.
+# Two accounts: the account is a follow-up, and only on the routes that send the plan out.
 T2A="$TMPDIR/t2a.jsonl"; : > "$T2A"
 o=$(PLAN_SPARRING_ACCOUNTS="$TWO" ups s2a plan "$T2A" | PLAN_SPARRING_ACCOUNTS="$TWO" bash "$HOOK")
 has "two accounts add the account question" "$o" "$PS_QUESTION_ACCOUNT"
-has "in the same call"                      "$o" "In the SAME call"
+has "only after a review route"             "$o" "If the user picks \"$PS_LABEL_SPAR\" or \"$PS_LABEL_PASS\", follow up with"
+hasnt "not bundled into the route question" "$o" "In the SAME call"
 has "naming the first account"              "$o" '"Work"'
 has "and the second"                        "$o" '"Private"'
+
+# The direct route sends nothing out, so it must open without an account ever being chosen.
+TDA="$TMPDIR/tda.jsonl"; : > "$TDA"
+PLAN_SPARRING_ACCOUNTS="$TWO" ups sDA plan "$TDA" | PLAN_SPARRING_ACCOUNTS="$TWO" bash "$HOOK" >/dev/null
+answer "$PS_LABEL_DIRECT" >> "$TDA"
+o=$(PLAN_SPARRING_ACCOUNTS="$TWO" gate sDA "$TDA" "plan da" | PLAN_SPARRING_ACCOUNTS="$TWO" bash "$HOOK")
+check "the direct route needs no account" "$(printf '%s' "$o" | decision)" "allow"
+has "and says it is unreviewed"          "$(printf '%s' "$o" | sysmsg)" "no external review"
 
 D2A=$(ps_epoch_dir s2a)
 answer "$PS_LABEL_SPAR" >> "$T2A"
 o=$(PLAN_SPARRING_ACCOUNTS="$TWO" gate s2a "$T2A" "plan 2a" | PLAN_SPARRING_ACCOUNTS="$TWO" bash "$HOOK")
 check "a route without an account -> deny" "$(printf '%s' "$o" | decision)" "deny"
 has "and the denial asks for one"          "$(printf '%s' "$o" | reason)" "$PS_QUESTION_ACCOUNT"
+hasnt "without asking the route again"     "$(printf '%s' "$o" | reason)" "$PS_QUESTION"
 [ -f "$D2A/account" ] && bad "nothing is recorded until an account is chosen" || ok "nothing is recorded until an account is chosen"
 
 # A bare tool_result cannot choose the account either, for the same reason it cannot choose a route.

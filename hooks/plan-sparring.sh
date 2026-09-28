@@ -41,15 +41,20 @@ cmd=$(printf '%q --epoch %q' "$PS_HOME/bin/plan-sparring-review" "$dir")
 # say() is the same channel on the allow path - a message with no decision is not an opinion.
 deny() { jq -n --arg m "$1" --arg r "$1 — $2" '{systemMessage:$m, hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'; exit 0; }
 say()  { jq -n --arg m "$1" '{systemMessage:$m}'; exit 0; }
-ask_route() { printf 'Ask exactly one AskUserQuestion with the question "%s" (header "%s") and these labels VERBATIM: "%s", "%s", "%s".%s' "$PS_QUESTION" "$1" "$PS_LABEL_SPAR" "$PS_LABEL_PASS" "$PS_LABEL_DIRECT" "$(ask_account)"; }
-# The second question rides in the SAME AskUserQuestion call, so choosing a route and an account
-# costs the user one dialogue, not two. Nothing at all is asked below two accounts: one configured
-# account needs no choosing, and none means the plugin leaves the CLI's home alone entirely.
-ask_account() {
+ask_route() { printf 'Ask exactly one AskUserQuestion with the question "%s" (header "%s") and these labels VERBATIM: "%s", "%s", "%s".' "$PS_QUESTION" "$1" "$PS_LABEL_SPAR" "$PS_LABEL_PASS" "$PS_LABEL_DIRECT"; }
+ask_account() {   # $1 = the words that lead into the instruction
+  printf '%s one AskUserQuestion with the question "%s" (header "Account") and these labels VERBATIM: %s. It picks which %s login reviews the plan; recommend nothing, the user knows which account this work belongs to.' \
+    "$1" "$PS_QUESTION_ACCOUNT" "$(ps_account_names | awk '{ printf "%s\"%s\"", (NR > 1 ? ", " : ""), $0 }')" \
+    "$PS_BACKEND_NAME"
+}
+# The account is a follow-up, not a second question in the same call: one AskUserQuestion cannot
+# make its second question depend on its first, and asking it on the direct route puts a question
+# to the user whose answer is thrown away. Nothing at all is asked below two accounts: one
+# configured account needs no choosing, and none means the plugin leaves the CLI's home alone.
+ask_start() {
+  ask_route "Plan route"
   [ "$(ps_account_count)" -ge 2 ] || return 0
-  printf ' In the SAME call, add a second question "%s" (header "Account") with these labels VERBATIM: %s. It picks which %s login reviews the plan and is ignored on the "%s" route; recommend nothing, the user knows which account this work belongs to.' \
-    "$PS_QUESTION_ACCOUNT" "$(ps_account_names | awk '{ printf "%s\"%s\"", (NR > 1 ? ", " : ""), $0 }')" \
-    "$PS_BACKEND_NAME" "$PS_LABEL_DIRECT"
+  ask_account " If the user picks \"$PS_LABEL_SPAR\" or \"$PS_LABEL_PASS\", follow up with"
 }
 
 case "$event" in
@@ -88,7 +93,7 @@ UserPromptSubmit)
   fi
 
   cat <<TXT
-[plan-sparring] You just entered plan mode. Before anything else, $(ask_route "Plan route")
+[plan-sparring] You just entered plan mode. Before anything else, $(ask_start)
   "$PS_LABEL_SPAR" - rounds until you agree. Worth the wait when the plan touches data, money,
      security or concurrency. Sends the plan to another vendor's model.
   "$PS_LABEL_PASS" - one review, incorporate the objections, present. A good default.
@@ -136,7 +141,7 @@ PreToolUse)
   # emitting a decision. ps_budget 0 is that same sanitized number by definition.
   step=$(ps_budget 0)
 
-  [ -z "$route" ] && deny "plan-sparring · no route chosen yet" "No plan route has been chosen yet. $(ask_route "Plan route") Then act on the answer and call ExitPlanMode again."
+  [ -z "$route" ] && deny "plan-sparring · no route chosen yet" "No plan route has been chosen yet. $(ask_start) Then act on the answer and call ExitPlanMode again."
   case "$route" in
     direct) say "plan-sparring · no external review (your choice)" ;;
     accept) say "plan-sparring · presenting as it stands (your choice)" ;;
@@ -149,7 +154,7 @@ PreToolUse)
   acct=""; naccts=$(ps_account_count)
   if [ "$naccts" -ge 2 ]; then
     acct=$(ps_account_pick "$tp" "$off")
-    [ -n "$acct" ] || deny "plan-sparring · no account chosen yet" "This plan is on the \"$route\" route, but no $PS_BACKEND_NAME account has been chosen for it. $(ask_route "Plan route") Then act on the answer and call ExitPlanMode again."
+    [ -n "$acct" ] || deny "plan-sparring · no account chosen yet" "This plan is on the \"$route\" route, but no $PS_BACKEND_NAME account has been chosen for it. $(ask_account "Ask exactly") Then act on the answer and call ExitPlanMode again."
   elif [ "$naccts" -eq 1 ]; then
     acct=$(ps_account_names)
   fi
