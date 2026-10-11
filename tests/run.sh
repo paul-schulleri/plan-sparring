@@ -724,6 +724,22 @@ has "and says which account and where" "$o" "which does not exist"
 o=$(PLAN_SPARRING_ACCOUNTS="Other=$HOME_A" bash "$RUNNER" --epoch "$DGH" 2>&1); rc=$?
 has "an account configured away is refused" "$o" "is not in PLAN_SPARRING_ACCOUNTS"
 
+echo "== the plan file beats a stale tool_input.plan =="
+# Field report: Write and ExitPlanMode issued in parallel handed ExitPlanMode the PREVIOUS draft in
+# tool_input.plan, while the harness presented the plan file. The file is what the user approves.
+TPF="$TMPDIR/tpf.jsonl"; : > "$TPF"; ups sPF plan "$TPF" | bash "$HOOK" >/dev/null
+DPF=$(ps_epoch_dir sPF); answer "$PS_LABEL_SPAR" >> "$TPF"
+PFILE="$TMPDIR/plan-file.md"; printf 'the current draft' > "$PFILE"
+jq -nc --arg t "$TPF" --arg f "$PFILE" \
+  '{hook_event_name:"PreToolUse",session_id:"sPF",transcript_path:$t,tool_name:"ExitPlanMode",
+    tool_input:{plan:"the previous draft",planFilePath:$f}}' | bash "$HOOK" >/dev/null
+check "the plan file is what gets reviewed" "$(cat "$DPF/plan.md")" "the current draft"
+# Without a readable file the parameter is still the fallback.
+jq -nc --arg t "$TPF" \
+  '{hook_event_name:"PreToolUse",session_id:"sPF",transcript_path:$t,tool_name:"ExitPlanMode",
+    tool_input:{plan:"only the parameter",planFilePath:"/nonexistent/plan.md"}}' | bash "$HOOK" >/dev/null
+check "an unreadable plan file falls back to the parameter" "$(cat "$DPF/plan.md")" "only the parameter"
+
 # The number in the README is a fact about this file, so this file checks it. It drifted by 20
 # once already. Deliberately NOT via ok/bad: this check reads $pass and must not count itself.
 grep -q "^$pass assertions" "$ROOT/README.md" \

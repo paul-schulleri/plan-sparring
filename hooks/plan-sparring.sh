@@ -164,12 +164,14 @@ PreToolUse)
   # runner will read. On the direct route nothing of the plan is written down at all.
   # select() matters: an empty plan string would still make jq -r emit a newline, and a
   # one-byte file counts as non-empty - the fallback below would never run.
-  printf '%s' "$payload" | jq -r '.tool_input.plan // "" | select(. != "")' > "$dir/plan.md" 2>/dev/null
-  # ExitPlanMode's own description says it does not take the plan as a parameter, so do not rely
-  # on tool_input.plan alone: fall back to the plan file the harness wrote.
+  # The plan file first: it is what the user is shown and approves. tool_input.plan can be the
+  # PREVIOUS draft - observed when Write and ExitPlanMode went out in parallel - so it is only the
+  # fallback for a harness that wrote no readable file.
   pf=$(printf '%s' "$payload" | jq -r '.tool_input.planFilePath // empty' 2>/dev/null)
   [ -n "$pf" ] && printf '%s' "$pf" > "$dir/planfile"
-  [ -s "$dir/plan.md" ] || { [ -s "$pf" ] && cp "$pf" "$dir/plan.md" 2>/dev/null; }
+  if ! { [ -n "$pf" ] && [ -s "$pf" ] && cp "$pf" "$dir/plan.md" 2>/dev/null; }; then
+    printf '%s' "$payload" | jq -r '.tool_input.plan // "" | select(. != "")' > "$dir/plan.md" 2>/dev/null
+  fi
   # The runner has no other way to know which route it is on, nor how far the budget was
   # extended, and "round 1/3" is a lie on a one-pass route - "round 4/3" is one after an
   # extension. Rewritten every time, so switching route mid-epoch heals itself.
