@@ -79,8 +79,13 @@ fi
 # One read of the previous receipt, and the exit status decides whether any of it counts.
 # ps_num before the arithmetic: a round of "two", 1.5 or "08" in there is a fatal $(( )) error.
 prev_fields=$(ps_receipt "$dir") || prev_fields=""
-{ read -r _; read -r _; read -r prev_outcome; read -r prev_sha; read -r prev_round
+{ read -r prev_epoch; read -r _; read -r prev_outcome; read -r prev_sha; read -r prev_round
   read -r prev_points; read -r prev_account; } <<< "$prev_fields"
+# A receipt from another epoch - a runner of an older phase that finished after #autoplan recreated
+# the directory - is not this round's predecessor. Counted, it used up the new phase's budget.
+if [ "$prev_epoch" != "$epoch_before" ]; then
+  prev_outcome=""; prev_sha=""; prev_round=0; prev_points=0; prev_account=""
+fi
 
 # Same draft, same account: the round would come back saying nothing has changed. Same draft,
 # DIFFERENT account is a different reviewer and a real round - and refusing it would deadlock
