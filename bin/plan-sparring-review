@@ -212,6 +212,10 @@ fi
 # started by hand there is no such file, and the base budget is the honest answer.
 cap=$(ps_num "$(cat "$dir/cap" 2>/dev/null || true)")
 [ "$cap" -ge 1 ] || cap=$(ps_budget 0)
+# Auto mode holds the round budget here, not only in the hook: the hook has to let this command
+# through for a Retry, so "run this command again" would otherwise run past any budget.
+halt="the round budget ($cap) is used up and the auto run halts here. Send the user a PushNotification if you have that tool, saying the run waits for them and why. Then ask one AskUserQuestion with the question \"$PS_QUESTION\" (header \"Rounds used up\") and these labels VERBATIM: \"$PS_LABEL_MORE\", \"$PS_LABEL_STOP_AUTO\". \"$PS_LABEL_STOP_AUTO\" means: tell the user to send #manualplan to end auto mode, then wait for them."
+[ "$auto" -eq 1 ] && [ "$route" != pass ] && [ "$round" -gt "$cap" ] && die "$halt"
 case "$route" in
   pass) where="single review pass" ;;
   *)    where="round $round/$cap" ;;
@@ -294,6 +298,7 @@ else
   nxt="work them into the plan, then call ExitPlanMode to hand the revision over"
 fi
 [ "$auto" -eq 1 ] && nxt="work them into $dir/plan.md, then run this command again"
+[ "$auto" -eq 1 ] && [ "$round" -ge "$cap" ] && nxt="$halt"
 if [ "$outcome" = agreed ]; then
   back="back   AGREED"; nxt="call ExitPlanMode - it opens for this plan as it stands"
   [ "$auto" -eq 1 ] && nxt="start implementing - the plan phase is over. Do not call EnterPlanMode or ExitPlanMode"

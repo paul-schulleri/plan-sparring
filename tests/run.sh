@@ -889,6 +889,23 @@ upsp sG auto "$TG" "#manualplan" | PATH="$NOJQ" "$NOJQ/bash" "$HOOK" >/dev/null
 [ -d "$DG" ] && bad "and #manualplan still ends it without jq" || ok "and #manualplan still ends it without jq"
 
 echo "== auto mode: halts =="
+# Field report: the review command is always allowed (for Retry), so the round budget has to hold
+# in the runner itself - otherwise "run this command again" ran rounds 2/1 and 3/1.
+TB="$TMPDIR/tb.jsonl"; : > "$TB"
+PLAN_SPARRING_MAX_ROUNDS=1 upsp sB2 auto "$TB" "#autoplan b" | PLAN_SPARRING_MAX_ROUNDS=1 bash "$HOOK" >/dev/null
+DB=$(ps_auto_dir sB2); echo "plan b1" > "$DB/plan.md"
+o=$(PLAN_SPARRING_MAX_ROUNDS=1 FAKE_MODE=objections bash "$RUNNER" --epoch "$DB" 2>&1)
+has "the last allowed round says the run halts" "$o" "$PS_LABEL_STOP_AUTO"
+hasnt "and does not ask for another round" "$o" "run this command again"
+echo "plan b2" > "$DB/plan.md"
+o=$(PLAN_SPARRING_MAX_ROUNDS=1 FAKE_MODE=agreed bash "$RUNNER" --epoch "$DB" 2>&1); rc=$?
+[ "$rc" -ne 0 ] && ok "a round over the budget is refused" || bad "a round over the budget is refused"
+check "and records nothing" "$(jq -r .round "$DB/receipt.json")" "1"
+[ -f "$DB/done" ] && bad "and ends nothing" || ok "and ends nothing"
+answer "$PS_LABEL_MORE" >> "$TB"
+w sB2 "$TMPDIR/src.txt" "$TB" | PLAN_SPARRING_MAX_ROUNDS=1 bash "$HOOK" >/dev/null   # the hook writes the new cap
+o=$(PLAN_SPARRING_MAX_ROUNDS=1 FAKE_MODE=agreed bash "$RUNNER" --epoch "$DB" 2>&1); rc=$?
+check "keep sparring buys the next round" "$rc" "0"
 TH="$TMPDIR/th.jsonl"; : > "$TH"
 PLAN_SPARRING_MAX_ROUNDS=1 upsp sH auto "$TH" "#autoplan task" | PLAN_SPARRING_MAX_ROUNDS=1 bash "$HOOK" >/dev/null
 DH=$(ps_auto_dir sH); echo "plan h" > "$DH/plan.md"
