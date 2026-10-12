@@ -73,8 +73,9 @@ Two hooks, one script, no changes to your `settings.json`.
 
 | Hook | What it does |
 |---|---|
-| `UserPromptSubmit` | Notices the transition into plan mode, opens an *epoch*, and asks Claude to put the route question to you. Silent on every other prompt. |
+| `UserPromptSubmit` | Notices the transition into plan mode, opens an *epoch*, and asks Claude to put the route question to you. Opens or ends an [auto mode](#auto-mode) phase on `#autoplan` / `#manualplan`. Silent on every other prompt. |
 | `PreToolUse` on `ExitPlanMode` | Decides whether the plan may be shown. |
+| `PreToolUse` on `Write`, `Edit`, `NotebookEdit`, `Bash`, `AskUserQuestion`, `EnterPlanMode` | Holds an auto mode plan phase. Silent when none is open. |
 
 An **epoch** is one planning round. It records where the transcript stood when the round began, so
 an answer you gave in an earlier round cannot authorise this one. It is deleted when you leave plan
@@ -136,6 +137,36 @@ the gate does not recognise. You always get to your plan, as a visible decision.
 | `PLAN_SPARRING_BIN` | `codex` | which CLI to call. On its own this does **not** make the plugin vendor-agnostic: the arguments are still Codex's. Swapping vendor means editing the two functions in [Another vendor](#another-vendor) |
 | `PLAN_SPARRING_ACCOUNTS` | unset | one `Name=directory` per line, one per login. Two or more turn on the account question; one is used without asking; unset leaves the CLI's home alone. See [Two accounts](#two-accounts) |
 | `PLAN_SPARRING_BACKEND_NAME` | `Codex` | what the reviewer is called in the route labels, messages and digest. Change it together with `PLAN_SPARRING_BIN` |
+| `PLAN_SPARRING_AUTO_ACCOUNT` | unset | the account an [auto mode](#auto-mode) phase is reviewed by. Required when two or more accounts are configured, since auto mode cannot ask |
+| `PLAN_SPARRING_PLAN_CHECK` | unset | auto mode only: a command run with the plan file as its last argument before every review round. Non-zero exit stops that round before it reaches the reviewer, and its output becomes the reason |
+
+## Auto mode
+
+Put `#autoplan` anywhere in a prompt and that task runs without you: Claude plans, the reviewer
+spars with it, and once it agrees Claude implements. `#manualplan` switches the session back, and a
+prompt without either keyword changes nothing. Without the keyword the plugin behaves exactly as
+described above.
+
+Auto mode does **not** use plan mode. In the Claude desktop app, `ExitPlanMode` always shows its
+approval dialog — measured with a `PermissionRequest` hook answering `allow`, with and without
+`setMode` — so a run through plan mode would always stop and wait for you. The plugin holds the plan
+phase itself instead. The phase ends in the review command, in the same step that records the
+reviewer's agreement, for exactly the text that was reviewed, and it stays over only while the
+plan file is still that text: edit the plan afterwards and the next change waits for another round.
+Until then:
+
+- `Write`, `Edit` and `NotebookEdit` are denied everywhere except the phase's plan file;
+- Bash is limited to reading commands and the review command;
+- `AskUserQuestion`, `EnterPlanMode` and `ExitPlanMode` are denied — Claude records assumptions in
+  the plan instead of asking.
+
+The run stops and asks you, with a push notification where Claude has that tool, when the rounds
+are used up, when the reviewer failed twice in a row, or when the plan has a `## Open decisions`
+section. There you choose *Keep sparring* (or *Retry*), or *Stop auto mode* and send `#manualplan`.
+There is deliberately no "go ahead as it stands" in auto mode: an answer cannot be bound to the
+draft it was given for, and you are at the keyboard anyway once the run has stopped.
+
+Start a session meant for auto mode in Auto mode, not in plan mode: leaving plan mode needs you.
 
 ## Two accounts
 
@@ -208,7 +239,12 @@ Read these before you rely on it.
 - **A round does not survive the session it was started in.** Quit while planning and resume, and
   the route question comes back and the review starts from round one — the round ends when the
   session does, not when you come back to it.
-- **The hook costs about 25ms on every prompt**, plan mode or not.
+- **The hook costs about 25ms on every prompt**, plan mode or not, and on every `Write`, `Edit`,
+  `Bash` and `AskUserQuestion` call, auto mode or not.
+- **Auto mode's read-only Bash check is a list, not a sandbox.** It accepts commands that start with
+  a reading command (`cat`, `ls`, `grep`, `git status`, …) and rejects redirects, substitutions and
+  known writing flags. A reading command that writes in a way the list does not know gets through,
+  and a harmless command not on the list is denied.
 
 ## Tests
 
@@ -216,7 +252,7 @@ Read these before you rely on it.
 bash tests/run.sh
 ```
 
-207 assertions against a fake backend: no network, no auth, no rate limit. They cover the route
+300 assertions against a fake backend: no network, no auth, no rate limit. They cover the route
 provenance, epoch binding, plan-hash binding, verdict parsing, the failure escape, the timeout,
 a transcript that has been truncated underneath a running round, the account binding, and every
 shape of receipt the

@@ -21,8 +21,22 @@ payload=$(cat)
 # state, so it says so instead of waving the plan through. UserPromptSubmit stays silent.
 if ! command -v jq >/dev/null 2>&1; then
   case "$payload" in
-    *'"PreToolUse"'*) printf '%s\n' '{"systemMessage":"plan-sparring · jq missing, cannot verify","hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"plan-sparring needs jq and it is not on PATH, so it cannot tell whether this plan was reviewed. Install jq, or set PLAN_SPARRING_OFF=1 to disable the plugin, then call ExitPlanMode again."}}' ;;
+    # Only ExitPlanMode: every Write and Bash call reaches this hook too, for auto mode, and a
+    # missing jq must not turn into a denial of ordinary work.
+    *'"PreToolUse"'*'"ExitPlanMode"'*|*'"ExitPlanMode"'*'"PreToolUse"'*) printf '%s\n' '{"systemMessage":"plan-sparring · jq missing, cannot verify","hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"plan-sparring needs jq and it is not on PATH, so it cannot tell whether this plan was reviewed. Install jq, or set PLAN_SPARRING_OFF=1 to disable the plugin, then call ExitPlanMode again."}}'; exit 0 ;;
   esac
+  # ...but an open auto phase must not fall open with it. Session id by bash regex and ps_sid's
+  # filter in parameter expansion, because jq is exactly what is missing and tr may be too.
+  if [[ $payload =~ \"session_id\"[[:space:]]*:[[:space:]]*\"([^\"]*)\" ]]; then
+    s=${BASH_REMATCH[1]//[^A-Za-z0-9._-]/}; a="$PS_ROOT/auto-${s:0:64}"
+    # The way out that the denial below names has to work without jq as well.
+    [[ $payload == *'"UserPromptSubmit"'*'#manualplan'* ]] && rm -rf "$a" 2>/dev/null
+    # Any phase, agreed or not: whether implementation may run depends on the plan's hash, and
+    # without jq that cannot be trusted to be checked. #manualplan above is the way out.
+    if [[ $payload == *'"PreToolUse"'* ]] && [ -d "$a" ]; then
+      printf '%s\n' '{"systemMessage":"plan-sparring · jq missing, auto phase held","hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"plan-sparring needs jq to tell whether this auto plan phase allows implementation, and it is not on PATH. Stop and tell the user: install jq, or send #manualplan to end the phase."}}'
+    fi
+  fi
   exit 0
 fi
 
@@ -57,6 +71,164 @@ ask_start() {
   ask_account " If the user picks \"$PS_LABEL_SPAR\" or \"$PS_LABEL_PASS\", follow up with"
 }
 
+adir=$(ps_auto_dir "$sid")
+acmd=$(printf '%q --epoch %q' "$PS_HOME/bin/plan-sparring-review" "$adir")
+
+# Auto mode. Plan mode cannot be used for it: the desktop app shows its approval dialog even when a
+# PermissionRequest hook allows ExitPlanMode, so a run would always stop there and wait for the
+# user. The plan phase is held by this plugin instead, outside plan mode. Prints why on failure,
+# because a keyword that silently does nothing looks like auto mode running.
+auto_open() {
+  local acct=""
+  if [ "$(ps_account_count)" -ge 2 ]; then
+    acct="${PLAN_SPARRING_AUTO_ACCOUNT:-}"
+    if [ -z "$acct" ] || ! ps_account_home "$acct" >/dev/null; then
+      printf '[plan-sparring] #autoplan was ignored: several %s accounts are configured and auto mode cannot ask which one, so PLAN_SPARRING_AUTO_ACCOUNT must name one of: %s. Tell the user once, then plan as usual.\n' \
+        "$PS_BACKEND_NAME" "$(ps_account_names | awk '{ printf "%s%s", (NR > 1 ? ", " : ""), $0 }')"
+      return 0
+    fi
+  elif [ "$(ps_account_count)" -eq 1 ]; then
+    acct=$(ps_account_names)
+  fi
+  if ! command -v "$PS_BACKEND_BIN" >/dev/null 2>&1; then
+    printf '[plan-sparring] #autoplan was ignored: the "%s" CLI is not on PATH, so no review can run. Tell the user once.\n' "$PS_BACKEND_BIN"
+    return 0
+  fi
+  # A fresh phase per #autoplan: the previous task's plan, receipt and answers must not carry over.
+  rm -rf "$adir" 2>/dev/null
+  mkdir -p "$adir" 2>/dev/null || return 0
+  ps_token > "$adir/id"
+  if [ -f "$tp" ]; then wc -c 2>/dev/null < "$tp" | tr -d ' ' > "$adir/offset"; else echo 0 > "$adir/offset"; fi
+  printf 'spar' > "$adir/route"; printf '%s' "$(ps_budget 0)" > "$adir/cap"
+  printf '%s' "$acct" > "$adir/account"; : > "$adir/auto"
+  [ "$mode" = "plan" ] && printf '[plan-sparring] This session is in plan mode, and leaving it needs the user. Tell the user auto mode needs the session switched to Auto mode, then continue.\n'
+  cat <<TXT
+[plan-sparring] Auto mode is on for this task (#autoplan): plan, have $PS_BACKEND_NAME review it, then
+implement - without the user.
+- Do not call EnterPlanMode or ExitPlanMode. Plan mode ends in an approval dialog that waits for the
+  user. This plugin holds the plan phase instead: until $PS_BACKEND_NAME agrees, writes outside the plan
+  file, Bash beyond read-only commands, and questions to the user are denied.
+- Write the plan to: $adir/plan.md
+  Follow the user's conventions for plans. Add a short "Scope" line naming what it leaves out.
+  Do not ask clarifying questions: decide, and list what you assumed under "## Assumptions". Only a
+  decision that truly is the user's to make goes under "## Open decisions" - that stops the run.
+- Then run: $acmd
+  Say one short line before it, relay the digest it prints, work the objections in or rebut them
+  under "## Rebuttals", and run it again until $PS_BACKEND_NAME returns AGREED. Then implement.
+- When a denial says the run halts, send the user a PushNotification if you have that tool, then ask
+  exactly as the denial says.
+TXT
+}
+
+# A reviewer that is never contradicted is not a sparring partner. Naming rebutting as an equal
+# move was not enough - two field runs incorporated 5/5 and 4/4 objections and rebutted none,
+# because "incorporate or rebut" is a judgement call and incorporating is always the safe one.
+# So the choice follows from a check that can be answered by reading the source. The second
+# question is load-bearing: "already holds today" alone would rebut "the data-loss path you
+# were asked to close is still open", which is a defect, not an inherited limitation.
+# Shared by the plan-mode gate and the auto plan phase.
+rebut="For each objection, settle two questions against the source, not from memory. First: does it describe something THIS change introduces, or something that already holds in the code today? Second, only if it already holds today: is fixing it part of what this plan set out to do, does the change newly expose it or rely on it, or does leaving it defeat the plan's stated goal? Only when that second answer is no is the behaviour inherited rather than caused - rebut that, and cite file:line as the evidence. Everything else gets incorporated. A rebuttal belongs in the plan under a \"## Rebuttals\" heading, one line per point - \"- <the point> - <why it does not apply here>\". It is a legitimate answer, not a dodge: the reviewer is told to weigh it. Change nothing that was not the subject of an objection."
+
+# Read-only, as far as a plan phase needs: every segment of the command must start with a reading
+# command, and nothing may redirect into a file or run a substitution. A guard against Claude
+# running ahead, not a sandbox - `find -fprint0` or an alias would get through, and the README says
+# so.
+ps_readonly() {   # $1 = the Bash command
+  local c="$1" seg w rest
+  c=${c//2>&1/}; c=${c//2>\/dev\/null/}
+  # shellcheck disable=SC2016 # the literal characters are what is being matched
+  case "$c" in *'>'*|*'<('*|*'$('*|*'`'*|*$'\n'*) return 1 ;; esac
+  while IFS= read -r seg; do
+    seg="${seg#"${seg%%[![:space:]]*}"}"
+    [ -n "$seg" ] || continue
+    w=${seg%%[[:space:]]*}; rest=${seg#"$w"}; rest=" ${rest#"${rest%%[![:space:]]*}"} "
+    case "$w" in
+      # No sed: its own `w` command writes files, and a script cannot be told apart from a range
+      # by a pattern. head, tail and grep cover what a plan needs to read.
+      cat|ls|head|tail|wc|grep|rg|jq|pwd|cd|echo|stat|file|diff) ;;
+      find) case "$rest" in *' -delete'*|*' -exec'*|*' -ok'*|*' -fprint'*|*' -fls'*) return 1 ;; esac ;;
+      git)  case "$rest" in *'--output'*) return 1 ;; esac   # git diff/log --output=<file> writes
+            case "$rest" in ' status '*|' log '*|' diff '*|' show '*|' grep '*|' ls-files '*|' rev-parse '*|' blame '*) ;; *) return 1 ;; esac ;;
+      *) return 1 ;;
+    esac
+  done <<< "$(printf '%s\n' "$c" | awk '{ gsub(/&&|\|\||[;|&]/, "\n"); print }')"
+  return 0
+}
+
+# Implementation may run while done carries THIS phase's id and the hash of the plan as it is on
+# disk now. A foreign id - a runner still out for an older phase when #autoplan recreated the
+# directory - ends nothing, and a plan that changed after agreement needs another round.
+auto_done() {
+  local d_id d_sha i
+  { read -r d_id; read -r d_sha; } 2>/dev/null < "$adir/done" || return 1
+  i=$(cat "$adir/id" 2>/dev/null) || return 1
+  [ -n "$i" ] && [ "$d_id" = "$i" ] && [ -s "$adir/plan.md" ] && [ "$d_sha" = "$(ps_sha "$adir/plan.md")" ]
+}
+
+# The plan phase of auto mode, for every tool except ExitPlanMode. Allows by staying silent, like
+# the rest of this hook; every denial names the next step, because Claude has no one to ask.
+auto_gate() {
+  local plan="$adir/plan.md" id off more budget fields repoch status outcome rounds
+  local fails why="" ask="" path cmdline next
+  [ -d "$adir" ] || return 0
+  # The phase ends only in the runner, in the same step that records the agreement, for exactly
+  # the text it reviewed. Ending it here, on a receipt, let any tool call that rewrote the plan -
+  # a parallel Write, a Bash redirect - be the call that opened the phase for an unreviewed draft.
+  auto_done && return 0
+  case "$tool" in Write|Edit|NotebookEdit)
+    path=$(printf '%s' "$payload" | jq -r '.tool_input.file_path // .tool_input.notebook_path // ""' 2>/dev/null)
+    [ "$path" = "$plan" ] && return 0 ;;
+  esac
+
+  id=$(cat "$adir/id" 2>/dev/null || true)
+  off=$(cat "$adir/offset" 2>/dev/null || echo 0)
+  # Answers count only from the phase's own offset, and only "Keep sparring" is read: it buys
+  # rounds. No answer ends a phase - that is the reviewer's agreement, or the user's #manualplan.
+  { read -r _; read -r more; } <<< "$(ps_route "$tp" "$off")"
+  budget=$(ps_budget "$more"); printf '%s' "$budget" > "$adir/cap" 2>/dev/null
+
+  fields=$(ps_receipt "$adir") || fields=""
+  { read -r repoch; read -r status; read -r outcome; read -r _; read -r rounds; read -r _
+    read -r _; } <<< "$fields"
+  rounds=$(ps_num "$rounds")
+  [ -n "$id" ] && [ "$repoch" = "$id" ] && [ "$status" = "ok" ] || outcome=""
+
+  fails=$(ps_num "$(cat "$adir/fails" 2>/dev/null || true)")
+  if [ -s "$plan" ] && grep -q '^## Open decisions' "$plan"; then
+    why="the plan has open decisions"
+    ask="Ask the user the open decisions in your own words, work the answers into the plan, remove the \"## Open decisions\" section and run $acmd again."
+  elif [ "$outcome" = "objections" ] && [ "$rounds" -ge "$budget" ]; then
+    why="$rounds rounds, no agreement"
+    ask="Ask one AskUserQuestion with the question \"$PS_QUESTION\" (header \"Rounds used up\") and these labels VERBATIM: \"$PS_LABEL_MORE\", \"$PS_LABEL_STOP_AUTO\". Name what the last round brought first. \"$PS_LABEL_STOP_AUTO\" means: tell the user to send #manualplan to end auto mode, then wait for them."
+  elif [ "$fails" -ge 2 ]; then
+    why="$PS_BACKEND_NAME failed $fails times"
+    ask="Ask one AskUserQuestion with the question \"$PS_QUESTION\" (header \"Sparring failed\") and these labels VERBATIM: \"$PS_LABEL_RETRY\", \"$PS_LABEL_STOP_AUTO\". \"$PS_LABEL_RETRY\" means: run $acmd again. \"$PS_LABEL_STOP_AUTO\" means: tell the user to send #manualplan to end auto mode, then wait for them."
+  fi
+
+  case "$tool" in
+    Bash)
+      cmdline=$(printf '%s' "$payload" | jq -r '.tool_input.command // ""' 2>/dev/null)
+      [ "$cmdline" = "$acmd" ] || [ "$cmdline" = "$acmd 2>&1" ] && return 0
+      ps_readonly "$cmdline" && return 0 ;;
+    AskUserQuestion) [ -n "$why" ] && return 0 ;;
+  esac
+
+  if [ -n "$why" ]; then
+    deny "plan-sparring · auto · halted: $why" "The auto run halts here and needs the user. Send the user a PushNotification first if you have that tool, saying the run waits for them and why. Then: $ask"
+  fi
+  if [ "$outcome" = "objections" ]; then
+    next="$PS_BACKEND_NAME still has objections. $rebut Work them into $plan, then run $acmd again."
+  else
+    next="Write the plan to $plan, then run $acmd."
+  fi
+  case "$tool" in
+    AskUserQuestion) next="Auto mode does not ask the user while planning: decide, list what you assumed under \"## Assumptions\" in $plan, and put only a decision that truly is the user's under \"## Open decisions\". $next" ;;
+    EnterPlanMode)   next="Do not call EnterPlanMode or ExitPlanMode in auto mode. $next" ;;
+    Bash)            next="Until the plan is agreed, Bash is limited to read-only commands and the review. $next" ;;
+  esac
+  deny "plan-sparring · auto · plan phase" "Implementation waits until $PS_BACKEND_NAME has agreed to the plan. $next"
+}
+
 case "$event" in
 
 UserPromptSubmit)
@@ -64,6 +236,14 @@ UserPromptSubmit)
   mkdir -p "$PS_ROOT" 2>/dev/null
   last=$(cat "$mf" 2>/dev/null || true)
   printf '%s' "$mode" > "$mf" 2>/dev/null
+
+  # Read separately: the prompt is free text over many lines and cannot join the line-based read.
+  prompt=$(printf '%s' "$payload" | jq -r '.prompt // ""' 2>/dev/null)
+  case "$prompt" in
+    *'#manualplan'*) rm -rf "$adir" 2>/dev/null ;;
+    # Auto mode replaces the plan-mode route question for this task, so nothing below runs.
+    *'#autoplan'*) auto_open; exit 0 ;;
+  esac
 
   if [ "$mode" != "plan" ]; then
     # Leaving plan mode ends the round: the epoch holds the plan text, so it goes now.
@@ -124,6 +304,13 @@ TXT
   ;;
 
 PreToolUse)
+  tool=$(printf '%s' "$payload" | jq -r '.tool_name // ""' 2>/dev/null)
+  # Only ExitPlanMode belongs to the plan-mode gate. Every other tool reaches this hook for the
+  # auto plan phase alone, and outside a phase that answer is silence.
+  if [ "$tool" != "ExitPlanMode" ]; then auto_gate; exit 0; fi
+  if [ -d "$adir" ] && ! auto_done; then
+    deny "plan-sparring · auto · not in plan mode" "Do not call EnterPlanMode or ExitPlanMode in auto mode: the approval dialog would wait for the user. Write the plan to $adir/plan.md and run $acmd until it is agreed, then implement."
+  fi
   # Self-healing: if the plugin was installed mid-session there is no epoch yet.
   if [ ! -d "$dir" ]; then
     mkdir -p "$dir" 2>/dev/null || exit 0
@@ -241,13 +428,6 @@ PreToolUse)
     st="plan-sparring · handing the draft to $PS_BACKEND_NAME"
   fi
 
-  # A reviewer that is never contradicted is not a sparring partner. Naming rebutting as an equal
-  # move was not enough - two field runs incorporated 5/5 and 4/4 objections and rebutted none,
-  # because "incorporate or rebut" is a judgement call and incorporating is always the safe one.
-  # So the choice follows from a check that can be answered by reading the source. The second
-  # question is load-bearing: "already holds today" alone would rebut "the data-loss path you
-  # were asked to close is still open", which is a defect, not an inherited limitation.
-  rebut="For each objection, settle two questions against the source, not from memory. First: does it describe something THIS change introduces, or something that already holds in the code today? Second, only if it already holds today: is fixing it part of what this plan set out to do, does the change newly expose it or rely on it, or does leaving it defeat the plan's stated goal? Only when that second answer is no is the behaviour inherited rather than caused - rebut that, and cite file:line as the evidence. Everything else gets incorporated. A rebuttal belongs in the plan under a \"## Rebuttals\" heading, one line per point - \"- <the point> - <why it does not apply here>\". It is a legitimate answer, not a dodge: the reviewer is told to weigh it. Change nothing that was not the subject of an objection."
   # Only once a round has come back: on the handover there is nothing to call an edge case yet.
   [ -f "$dir/receipt.json" ] && edge=" If what came back is an edge case of an edge case for what this plan actually covers, say that in the rebuttal instead of hardening further."
 
@@ -267,7 +447,7 @@ SessionEnd)
   # permission_mode, so "were we planning?" cannot be answered here, and removing what is not there
   # costs nothing. PLAN_SPARRING_OFF exits long before this, so switching the plugin off keeps the
   # state it had - the README names that as the limit it is.
-  [ -n "${PLAN_SPARRING_KEEP:-}" ] || rm -rf "$dir" "$(ps_mode_file "$sid")" 2>/dev/null
+  [ -n "${PLAN_SPARRING_KEEP:-}" ] || rm -rf "$dir" "$adir" "$(ps_mode_file "$sid")" 2>/dev/null
   ;;
 
 esac

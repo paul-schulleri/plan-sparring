@@ -24,6 +24,17 @@
             "statusMessage": "Checking the sparring receipt..."
           }
         ]
+      },
+      {
+        "matcher": "Write|Edit|NotebookEdit|Bash|AskUserQuestion|EnterPlanMode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/plan-sparring.sh\"",
+            "commandWindows": "exit 0",
+            "timeout": 20
+          }
+        ]
       }
     ],
     "SessionEnd": [

@@ -63,6 +63,9 @@ PS_LABEL_DIRECT="Straight from Claude"
 PS_LABEL_ACCEPT="Present it as it stands"   # offered once the rounds run out
 PS_LABEL_MORE="Keep sparring"               # grants another budget when the rounds run out
 PS_LABEL_RETRY="Retry"          # keeps the current route; ignored when resolving it
+# Auto mode's only way out at a halt besides more rounds: the user ends the phase with #manualplan.
+# There is no "go ahead as it stands" there - an answer cannot be bound to the draft it was for.
+PS_LABEL_STOP_AUTO="Stop auto mode"
 
 # --- state -------------------------------------------------------------------
 umask 077
@@ -71,6 +74,9 @@ PS_ROOT="${TMPDIR:-/tmp}/plan-sparring"
 ps_sid() { printf '%s' "${1:-nosid}" | tr -cd 'A-Za-z0-9._-' | cut -c1-64; }
 ps_mode_file() { printf '%s/mode-%s' "$PS_ROOT" "$(ps_sid "$1")"; }
 ps_epoch_dir() { printf '%s/ep-%s' "$PS_ROOT" "$(ps_sid "$1")"; }
+# Auto mode's plan phase. Its own directory, not the epoch: the epoch belongs to plan mode and is
+# wiped on every entry into it, and the phase must survive the user toggling modes.
+ps_auto_dir() { printf '%s/auto-%s' "$PS_ROOT" "$(ps_sid "$1")"; }
 ps_sha() { if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | cut -d' ' -f1; else sha256sum "$1" | cut -d' ' -f1; fi; }
 
 # The || fallback must test the OUTPUT, not the exit status: od on empty input succeeds, so a

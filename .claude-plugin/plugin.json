@@ -1,6 +1,6 @@
 {
   "name": "plan-sparring",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Spar your Claude Code plans against a model from another vendor before you ever see them. Asks how each plan should be produced, then holds ExitPlanMode until a real review came back.",
   "author": {
     "name": "Paul Schulleri"

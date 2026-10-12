@@ -25,6 +25,13 @@ done
 
 [ -n "$dir" ] || die "missing --epoch <dir>"
 [ -d "$dir" ] || die "no such epoch: $dir (the planning round may have ended; call ExitPlanMode again)"
+# An auto plan phase never goes through ExitPlanMode - in the desktop app that ends in a dialog
+# waiting for the user - so every pointer at the next step has to name this command and the plan
+# file instead. Written by the hook when the phase opens.
+auto=0; [ -f "$dir/auto" ] && auto=1
+if [ "$auto" -eq 1 ] && [ ! -s "$dir/plan.md" ]; then
+  die "no plan in $dir/plan.md yet - write it there, then run this again"
+fi
 if [ ! -s "$dir/plan.md" ]; then
   pf=$(cat "$dir/planfile" 2>/dev/null || true)
   [ -n "$pf" ] && die "the captured plan in $dir is empty, and the plan file ($pf) could not be read either. Call ExitPlanMode once and run this again; if it stays empty, report it as a plugin bug."
@@ -47,6 +54,13 @@ ps_fail() { echo $(( $(ps_num "$(cat "$dir/fails" 2>/dev/null || true)") + 1 )) 
 # turned into a receipt for the new one.
 epoch_before=$(cat "$dir/id" 2>/dev/null || true)
 sha_before=$(ps_sha "$dir/plan.md")
+# Auto mode ends the phase on agreement, so the user's own plan check has to pass on this exact
+# draft first - before a round is spent on it. Their command, so sh -c is the point; the plan path
+# goes in as an argument, never spliced into the string. Not a backend failure: no fail count.
+if [ "$auto" -eq 1 ] && [ -n "${PLAN_SPARRING_PLAN_CHECK:-}" ]; then
+  check_out=$(sh -c "$PLAN_SPARRING_PLAN_CHECK \"\$1\"" plan-check "$dir/plan.md" 2>&1) \
+    || die "the plan check (PLAN_SPARRING_PLAN_CHECK) fails on $dir/plan.md: ${check_out:-no output} - fix the plan, then run this again"
+fi
 [ -n "$epoch_before" ] || die "epoch $dir has no id - it looks corrupt; call ExitPlanMode again to open a fresh round"
 
 # Written by the hook alongside the plan, so a round that has a plan has an account whenever any
@@ -72,6 +86,7 @@ prev_fields=$(ps_receipt "$dir") || prev_fields=""
 # DIFFERENT account is a different reviewer and a real round - and refusing it would deadlock
 # against the gate, which denies a receipt from the account the user just switched away from.
 if [ -n "$prev_sha" ] && [ "$prev_sha" = "$sha_before" ] && [ "$prev_account" = "$account" ]; then
+  [ "$auto" -eq 1 ] && die "this is the same draft that was just reviewed. Work the objections into $dir/plan.md first, then run this again."
   die "this is the same draft that was just reviewed, so a new round would come back saying nothing has changed. Editing the plan file is not enough: call ExitPlanMode again to hand the revised draft over, and you will be pointed back here."
 fi
 
@@ -263,6 +278,12 @@ if ! { jq -n --arg e "$epoch_before" --arg b "$PS_BACKEND_NAME" --arg m "$PS_MOD
   die "the review came back but the receipt could not be written to $dir. Check disk space and permissions."
 fi
 echo 0 > "$dir/fails"
+# Here and only here an auto phase ends: the receipt was just written for the text this round
+# reviewed, and the hash check above proved the plan did not change while it was out.
+# Epoch id and reviewed hash go in, not an empty marker. A newer #autoplan can recreate this
+# directory after the checks above, and the plan can be rewritten in that same moment; the hook
+# lets implementation run only while both still match.
+[ "$auto" -eq 1 ] && [ "$outcome" = agreed ] && printf '%s\n%s\n' "$epoch_before" "$sha_before" > "$dir/done"
 [ -n "${PLAN_SPARRING_KEEP:-}" ] || rm -f "$dir/plan-$((round - 2)).md" 2>/dev/null
 
 # On the pass route the next ExitPlanMode opens the gate: nothing is handed over, so do not
@@ -272,8 +293,10 @@ if [ "$route" = pass ]; then
 else
   nxt="work them into the plan, then call ExitPlanMode to hand the revision over"
 fi
+[ "$auto" -eq 1 ] && nxt="work them into $dir/plan.md, then run this command again"
 if [ "$outcome" = agreed ]; then
   back="back   AGREED"; nxt="call ExitPlanMode - it opens for this plan as it stands"
+  [ "$auto" -eq 1 ] && nxt="start implementing - the plan phase is over. Do not call EnterPlanMode or ExitPlanMode"
 elif [ -n "$points" ]; then
   back="back   OBJECTIONS — $(printf '%s\n' "$points" | grep -c .) highlighted point(s)"
 else

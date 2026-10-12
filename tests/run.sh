@@ -740,6 +740,180 @@ jq -nc --arg t "$TPF" \
     tool_input:{plan:"only the parameter",planFilePath:"/nonexistent/plan.md"}}' | bash "$HOOK" >/dev/null
 check "an unreadable plan file falls back to the parameter" "$(cat "$DPF/plan.md")" "only the parameter"
 
+echo "== auto mode: the switch =="
+upsp() { jq -nc --arg s "$1" --arg m "$2" --arg t "${3:-}" --arg p "$4" \
+        '{hook_event_name:"UserPromptSubmit",session_id:$s,permission_mode:$m,transcript_path:$t,prompt:$p}'; }
+TA="$TMPDIR/ta.jsonl"; : > "$TA"
+o=$(upsp sA auto "$TA" "just do it" | bash "$HOOK"); DA=$(ps_auto_dir sA)
+[ -d "$DA" ] && bad "no keyword, no phase" || ok "no keyword, no phase"
+check "and nothing is said" "$o" ""
+# The harness puts its own reminders in front of the user's text, so the keyword can be anywhere.
+o=$(upsp sA auto "$TA" "<system-reminder>worktree</system-reminder> #autoplan add a note" | bash "$HOOK")
+[ -d "$DA" ] && ok "#autoplan opens a phase" || bad "#autoplan opens a phase"
+check "on the spar route" "$(cat "$DA/route" 2>/dev/null)" "spar"
+[ -s "$DA/id" ] && ok "with an epoch id" || bad "with an epoch id"
+[ -f "$DA/auto" ] && ok "marked for the runner" || bad "marked for the runner"
+has "names the plan file" "$o" "$DA/plan.md"
+has "and keeps Claude out of plan mode" "$o" "Do not call EnterPlanMode or ExitPlanMode"
+hasnt "and asks no route" "$o" "$PS_QUESTION"
+id1=$(cat "$DA/id"); upsp sA auto "$TA" "#autoplan next task" | bash "$HOOK" >/dev/null
+[ "$(cat "$DA/id")" != "$id1" ] && ok "a second #autoplan opens a fresh phase" || bad "a second #autoplan opens a fresh phase"
+upsp sA auto "$TA" "#manualplan" | bash "$HOOK" >/dev/null
+[ -d "$DA" ] && bad "#manualplan ends the phase" || ok "#manualplan ends the phase"
+# With several logins the phase cannot ask which one, so a missing or unknown choice opens nothing.
+TWOA="Work=$TMPDIR
+Private=$TMPDIR"
+o=$(PLAN_SPARRING_ACCOUNTS="$TWOA" upsp sB auto "$TA" "#autoplan x" | PLAN_SPARRING_ACCOUNTS="$TWOA" bash "$HOOK")
+[ -d "$(ps_auto_dir sB)" ] && bad "two accounts and no auto account open nothing" || ok "two accounts and no auto account open nothing"
+has "and say why" "$o" "PLAN_SPARRING_AUTO_ACCOUNT"
+o=$(PLAN_SPARRING_ACCOUNTS="$TWOA" PLAN_SPARRING_AUTO_ACCOUNT=Nope upsp sB auto "$TA" "#autoplan x" \
+    | PLAN_SPARRING_ACCOUNTS="$TWOA" PLAN_SPARRING_AUTO_ACCOUNT=Nope bash "$HOOK")
+[ -d "$(ps_auto_dir sB)" ] && bad "an unknown auto account opens nothing" || ok "an unknown auto account opens nothing"
+PLAN_SPARRING_ACCOUNTS="$TWOA" PLAN_SPARRING_AUTO_ACCOUNT=Private upsp sB auto "$TA" "#autoplan x" \
+  | PLAN_SPARRING_ACCOUNTS="$TWOA" PLAN_SPARRING_AUTO_ACCOUNT=Private bash "$HOOK" >/dev/null
+check "a configured auto account is used" "$(cat "$(ps_auto_dir sB)/account" 2>/dev/null)" "Private"
+o=$(PLAN_SPARRING_OFF=1 upsp sC auto "$TA" "#autoplan x" | PLAN_SPARRING_OFF=1 bash "$HOOK")
+[ -d "$(ps_auto_dir sC)" ] && bad "switched off opens no phase" || ok "switched off opens no phase"
+sess_end sB | bash "$HOOK" >/dev/null
+[ -d "$(ps_auto_dir sB)" ] && bad "SessionEnd removes the phase" || ok "SessionEnd removes the phase"
+
+echo "== auto mode: the plan phase =="
+pre() {   # $1 sid, $2 tool, $3 tool_input JSON, $4 transcript
+  jq -nc --arg s "$1" --arg tool "$2" --argjson i "$3" --arg t "${4:-}" \
+    '{hook_event_name:"PreToolUse",session_id:$s,transcript_path:$t,permission_mode:"auto",tool_name:$tool,tool_input:$i}'
+}
+w()  { pre "$1" Write "$(jq -nc --arg f "$2" '{file_path:$f,content:"x"}')" "${3:-}"; }
+sh_() { pre "$1" Bash "$(jq -nc --arg c "$2" '{command:$c}')" "${3:-}"; }
+TG="$TMPDIR/tg.jsonl"; : > "$TG"
+o=$(w sG "$TMPDIR/src.txt" "$TG" | bash "$HOOK"); check "without a phase writes are untouched" "$o" ""
+upsp sG auto "$TG" "#autoplan task" | bash "$HOOK" >/dev/null; DG=$(ps_auto_dir sG)
+GCMD=$(printf '%q --epoch %q' "$ROOT/bin/plan-sparring-review" "$DG")
+o=$(w sG "$TMPDIR/src.txt" "$TG" | bash "$HOOK")
+check "a write outside the plan file is denied" "$(printf '%s' "$o" | decision)" "deny"
+has "and the denial names the plan file" "$(printf '%s' "$o" | reason)" "$DG/plan.md"
+o=$(w sG "$DG/plan.md" "$TG" | bash "$HOOK"); check "the plan file itself may be written" "$o" ""
+o=$(pre sG Edit "$(jq -nc --arg f "$TMPDIR/src.txt" '{file_path:$f}')" "$TG" | bash "$HOOK")
+check "Edit is held too" "$(printf '%s' "$o" | decision)" "deny"
+o=$(pre sG NotebookEdit "$(jq -nc --arg f "$TMPDIR/n.ipynb" '{notebook_path:$f}')" "$TG" | bash "$HOOK")
+check "NotebookEdit is held too" "$(printf '%s' "$o" | decision)" "deny"
+for c in "ls -la" "git status -sb" "grep -rn foo . | head -5" "head -5 f 2>/dev/null" "$GCMD" "$GCMD 2>&1"; do
+  o=$(sh_ sG "$c" "$TG" | bash "$HOOK"); check "read-only bash passes: $c" "$o" ""
+done
+for c in "rm -rf x" "echo x > f" "sed -i s/a/b/ f" "find . -delete" "git commit -m x" "cat \$(rm x)" \
+         "ls; rm x" "ls && touch y" "npm test" "cat f | tee g"; do
+  o=$(sh_ sG "$c" "$TG" | bash "$HOOK"); check "writing bash is denied: $c" "$(printf '%s' "$o" | decision)" "deny"
+done
+o=$(pre sG AskUserQuestion '{"questions":[{"question":"Which name?"}]}' "$TG" | bash "$HOOK")
+check "a clarifying question is denied" "$(printf '%s' "$o" | decision)" "deny"
+has "and told to assume instead" "$(printf '%s' "$o" | reason)" "## Assumptions"
+o=$(pre sG EnterPlanMode '{}' "$TG" | bash "$HOOK"); check "plan mode is kept out" "$(printf '%s' "$o" | decision)" "deny"
+o=$(gate sG "$TG" | bash "$HOOK"); check "ExitPlanMode is denied in a phase" "$(printf '%s' "$o" | decision)" "deny"
+has "with the reason" "$(printf '%s' "$o" | reason)" "Do not call EnterPlanMode or ExitPlanMode"
+
+echo "== auto mode: review and end of the phase =="
+o=$(bash "$RUNNER" --epoch "$DG" 2>&1); has "no plan yet points at the plan file" "$o" "$DG/plan.md"
+hasnt "and not at ExitPlanMode" "$o" "ExitPlanMode"
+echo "plan one" > "$DG/plan.md"
+o=$(FAKE_MODE=objections bash "$RUNNER" --epoch "$DG" 2>&1)
+check "the runner reviews a phase" "$(jq -r .outcome "$DG/receipt.json")" "objections"
+has "and points back at itself" "$o" "run this command again"
+hasnt "never at ExitPlanMode" "$o" "call ExitPlanMode"
+o=$(FAKE_MODE=objections bash "$RUNNER" --epoch "$DG" 2>&1)
+has "an unchanged draft points at the plan file" "$o" "$DG/plan.md"
+hasnt "and not at ExitPlanMode either" "$o" "ExitPlanMode"
+o=$(w sG "$TMPDIR/src.txt" "$TG" | bash "$HOOK")
+check "objections keep the phase closed" "$(printf '%s' "$o" | decision)" "deny"
+has "and ask for rebuttals or changes" "$(printf '%s' "$o" | reason)" "## Rebuttals"
+# The phase ends where the agreement is made, in the runner, for exactly the text it reviewed.
+# The hook never ends it on a receipt: any tool call could be the one that changes the plan.
+echo "plan two" > "$DG/plan.md"
+o=$(PLAN_SPARRING_PLAN_CHECK="echo matrix missing; false" FAKE_MODE=agreed bash "$RUNNER" --epoch "$DG" 2>&1); rc=$?
+[ "$rc" -ne 0 ] && ok "a failing plan check stops the review" || bad "a failing plan check stops the review"
+has "and passes its output on" "$o" "matrix missing"
+[ -f "$DG/done" ] && bad "and ends nothing" || ok "and ends nothing"
+o=$(PLAN_SPARRING_PLAN_CHECK="grep -q two" FAKE_MODE=agreed bash "$RUNNER" --epoch "$DG" 2>&1)
+has "agreement says to implement" "$o" "start implementing"
+hasnt "and not to call ExitPlanMode" "$o" "call ExitPlanMode"
+[ -f "$DG/done" ] && ok "agreement ends the phase" || bad "agreement ends the phase"
+o=$(w sG "$TMPDIR/src.txt" "$TG" | bash "$HOOK"); check "and implementation may start" "$o" ""
+o=$(sh_ sG "rm -rf x" "$TG" | bash "$HOOK"); check "after the phase bash is free again" "$o" ""
+o=$(pre sG AskUserQuestion '{"questions":[{"question":"q"}]}' "$TG" | bash "$HOOK"); check "and so are questions" "$o" ""
+# An agreed receipt alone - here one written by hand for the current text - never opens a phase.
+upsp sG auto "$TG" "#autoplan another task" | bash "$HOOK" >/dev/null
+echo "plan three" > "$DG/plan.md"
+jq -n --arg e "$(cat "$DG/id")" --arg s "$(ps_sha "$DG/plan.md")" \
+  '{epoch:$e,status:"ok",outcome:"agreed",input_sha256:$s,round:1}' > "$DG/receipt.json"
+o=$(w sG "$TMPDIR/src.txt" "$TG" | bash "$HOOK"); check "an agreed receipt alone does not open the phase" "$(printf '%s' "$o" | decision)" "deny"
+o=$(sh_ sG "printf 'draft B' > $DG/plan.md" "$TG" | bash "$HOOK")
+check "nor does bash that rewrites the plan" "$(printf '%s' "$o" | decision)" "deny"
+[ -f "$DG/done" ] && bad "and nothing ends it on the side" || ok "and nothing ends it on the side"
+
+echo "== auto mode: review fixes =="
+# A runner still out for an older phase must not end a newer one by writing done into it.
+upsp sE auto "$TG" "#autoplan e" | bash "$HOOK" >/dev/null; DE=$(ps_auto_dir sE)
+echo "an id from the phase before" > "$DE/done"
+o=$(w sE "$TMPDIR/src.txt" "$TG" | bash "$HOOK"); check "done from another phase does not end this one" "$(printf '%s' "$o" | decision)" "deny"
+echo "x" > "$DE/plan.md"; FAKE_MODE=agreed bash "$RUNNER" --epoch "$DE" >/dev/null 2>&1
+check "the runner writes this phase's id into done" "$(head -1 "$DE/done")" "$(cat "$DE/id")"
+check "and the hash it reviewed" "$(sed -n 2p "$DE/done")" "$(ps_sha "$DE/plan.md")"
+o=$(w sE "$TMPDIR/src.txt" "$TG" | bash "$HOOK"); check "and that ends it" "$o" ""
+# Implementation runs against the agreed text. A plan that changes afterwards - or in the moment
+# between the runner's last hash check and done - closes the phase again until it is reviewed.
+echo "y" > "$DE/plan.md"
+o=$(w sE "$TMPDIR/src.txt" "$TG" | bash "$HOOK"); check "a plan changed after agreement closes the phase again" "$(printf '%s' "$o" | decision)" "deny"
+echo "x" > "$DE/plan.md"
+o=$(w sE "$TMPDIR/src.txt" "$TG" | bash "$HOOK"); check "and the agreed text opens it again" "$o" ""
+for c in "sed -n 'w src.js' f" "sed -n '1,5p' f" "git diff --output=src.js" "git log --output src.js"; do
+  o=$(sh_ sG "$c" "$TG" | bash "$HOOK"); check "a writing form is denied: $c" "$(printf '%s' "$o" | decision)" "deny"
+done
+# Without jq the plan-mode gate denies ExitPlanMode; every other tool stays untouched - unless a
+# phase is open, which must not fall open just because jq went missing.
+o=$(w sNJ "$TMPDIR/src.txt" | PATH="$NOJQ" "$NOJQ/bash" "$HOOK"); check "missing jq leaves ordinary writes alone" "$o" ""
+o=$(w sG "$TMPDIR/src.txt" | PATH="$NOJQ" "$NOJQ/bash" "$HOOK")
+has "but holds an open phase" "$o" '"permissionDecision":"deny"'
+# Without jq (and maybe shasum) the hash binding cannot be verified, so even an agreed phase holds.
+printf '%s\n%s\n' "$(cat "$DG/id")" "whatever" > "$DG/done"
+o=$(w sG "$TMPDIR/src.txt" | PATH="$NOJQ" "$NOJQ/bash" "$HOOK")
+has "and holds an agreed one it cannot verify" "$o" '"permissionDecision":"deny"'
+ln -sf "$(command -v rm)" "$NOJQ/rm"   # losing jq does not mean losing coreutils
+upsp sG auto "$TG" "#manualplan" | PATH="$NOJQ" "$NOJQ/bash" "$HOOK" >/dev/null
+[ -d "$DG" ] && bad "and #manualplan still ends it without jq" || ok "and #manualplan still ends it without jq"
+
+echo "== auto mode: halts =="
+TH="$TMPDIR/th.jsonl"; : > "$TH"
+PLAN_SPARRING_MAX_ROUNDS=1 upsp sH auto "$TH" "#autoplan task" | PLAN_SPARRING_MAX_ROUNDS=1 bash "$HOOK" >/dev/null
+DH=$(ps_auto_dir sH); echo "plan h" > "$DH/plan.md"
+PLAN_SPARRING_MAX_ROUNDS=1 FAKE_MODE=objections bash "$RUNNER" --epoch "$DH" >/dev/null 2>&1
+o=$(w sH "$TMPDIR/src.txt" "$TH" | PLAN_SPARRING_MAX_ROUNDS=1 bash "$HOOK")
+check "used-up rounds halt the run" "$(printf '%s' "$o" | decision)" "deny"
+has "and ask the user with the labels" "$(printf '%s' "$o" | reason)" "$PS_LABEL_MORE"
+has "after a push notification" "$(printf '%s' "$o" | reason)" "PushNotification"
+o=$(pre sH AskUserQuestion '{"questions":[{"question":"x"}]}' "$TH" | PLAN_SPARRING_MAX_ROUNDS=1 bash "$HOOK")
+check "a halted run may ask" "$o" ""
+answer "$PS_LABEL_MORE" >> "$TH"
+o=$(pre sH AskUserQuestion '{"questions":[{"question":"x"}]}' "$TH" | PLAN_SPARRING_MAX_ROUNDS=1 bash "$HOOK")
+check "keep sparring grants rounds and closes the questions again" "$(printf '%s' "$o" | decision)" "deny"
+# Auto mode has no "go ahead as it stands": an answer in the transcript cannot be bound to the
+# draft it was given for. The way out is the user ending auto mode with #manualplan.
+FAKE_MODE=objections PLAN_SPARRING_MAX_ROUNDS=1 bash "$RUNNER" --epoch "$DH" >/dev/null 2>&1   # same draft: refused
+echo "plan h, revised" > "$DH/plan.md"; FAKE_MODE=objections PLAN_SPARRING_MAX_ROUNDS=1 bash "$RUNNER" --epoch "$DH" >/dev/null 2>&1
+o=$(w sH "$TMPDIR/src.txt" "$TH" | PLAN_SPARRING_MAX_ROUNDS=1 bash "$HOOK")
+has "the halt offers to stop auto mode" "$(printf '%s' "$o" | reason)" "$PS_LABEL_STOP_AUTO"
+hasnt "and never to go ahead as it stands" "$(printf '%s' "$o" | reason)" "$PS_LABEL_ACCEPT"
+answer "$PS_LABEL_ACCEPT" >> "$TH"
+o=$(w sH "$TMPDIR/src.txt" "$TH" | PLAN_SPARRING_MAX_ROUNDS=1 bash "$HOOK")
+check "an answer to go ahead opens nothing" "$(printf '%s' "$o" | decision)" "deny"
+[ -f "$DH/done" ] && bad "and ends nothing" || ok "and ends nothing"
+TO="$TMPDIR/to.jsonl"; : > "$TO"; upsp sO auto "$TO" "#autoplan t" | bash "$HOOK" >/dev/null
+DO=$(ps_auto_dir sO); printf '# p\n## Open decisions\n- which tenant\n' > "$DO/plan.md"
+o=$(w sO "$TMPDIR/src.txt" "$TO" | bash "$HOOK"); has "open decisions halt the run" "$(printf '%s' "$o" | reason)" "Open decisions"
+o=$(pre sO AskUserQuestion '{"questions":[{"question":"x"}]}' "$TO" | bash "$HOOK"); check "and may be asked" "$o" ""
+o=$(w sO "$DO/plan.md" "$TO" | bash "$HOOK"); check "and worked into the plan" "$o" ""
+echo 2 > "$DO/fails"; printf '# p\n' > "$DO/plan.md"
+o=$(w sO "$TMPDIR/src.txt" "$TO" | bash "$HOOK"); has "a failing backend halts the run" "$(printf '%s' "$o" | reason)" "$PS_LABEL_RETRY"
+o=$(sh_ sO "$(printf '%q --epoch %q' "$ROOT/bin/plan-sparring-review" "$DO")" "$TO" | bash "$HOOK")
+check "and the review may still be retried" "$o" ""
+
 # The number in the README is a fact about this file, so this file checks it. It drifted by 20
 # once already. Deliberately NOT via ok/bad: this check reads $pass and must not count itself.
 grep -q "^$pass assertions" "$ROOT/README.md" \
