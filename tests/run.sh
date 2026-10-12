@@ -906,6 +906,15 @@ answer "$PS_LABEL_MORE" >> "$TB"
 w sB2 "$TMPDIR/src.txt" "$TB" | PLAN_SPARRING_MAX_ROUNDS=1 bash "$HOOK" >/dev/null   # the hook writes the new cap
 o=$(PLAN_SPARRING_MAX_ROUNDS=1 FAKE_MODE=agreed bash "$RUNNER" --epoch "$DB" 2>&1); rc=$?
 check "keep sparring buys the next round" "$rc" "0"
+# An agreement on the last allowed round, then an edit: the runner refuses another round, so the
+# hook has to let the budget question through as well, or neither side lets the run go on.
+TC="$TMPDIR/tc.jsonl"; : > "$TC"
+PLAN_SPARRING_MAX_ROUNDS=1 upsp sC2 auto "$TC" "#autoplan c" | PLAN_SPARRING_MAX_ROUNDS=1 bash "$HOOK" >/dev/null
+DC=$(ps_auto_dir sC2); echo "plan c1" > "$DC/plan.md"
+PLAN_SPARRING_MAX_ROUNDS=1 FAKE_MODE=agreed bash "$RUNNER" --epoch "$DC" >/dev/null 2>&1
+echo "plan c2" > "$DC/plan.md"
+o=$(pre sC2 AskUserQuestion '{"questions":[{"question":"x"}]}' "$TC" | PLAN_SPARRING_MAX_ROUNDS=1 bash "$HOOK")
+check "a used-up budget after a stale agreement may still ask" "$o" ""
 TH="$TMPDIR/th.jsonl"; : > "$TH"
 PLAN_SPARRING_MAX_ROUNDS=1 upsp sH auto "$TH" "#autoplan task" | PLAN_SPARRING_MAX_ROUNDS=1 bash "$HOOK" >/dev/null
 DH=$(ps_auto_dir sH); echo "plan h" > "$DH/plan.md"

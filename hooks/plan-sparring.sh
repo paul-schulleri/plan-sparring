@@ -200,7 +200,9 @@ auto_gate() {
   if [ -s "$plan" ] && grep -q '^## Open decisions' "$plan"; then
     why="the plan has open decisions"
     ask="Ask the user the open decisions in your own words, work the answers into the plan, remove the \"## Open decisions\" section and run $acmd again."
-  elif [ "$outcome" = "objections" ] && [ "$rounds" -ge "$budget" ]; then
+  # Any receipt of this phase, not only objections: an agreement that went stale when the plan
+  # changed leaves the phase open too, and the runner refuses the round beyond the budget either way.
+  elif [ -n "$outcome" ] && [ "$rounds" -ge "$budget" ]; then
     why="$rounds rounds, no agreement"
     ask="Ask one AskUserQuestion with the question \"$PS_QUESTION\" (header \"Rounds used up\") and these labels VERBATIM: \"$PS_LABEL_MORE\", \"$PS_LABEL_STOP_AUTO\". Name what the last round brought first. \"$PS_LABEL_STOP_AUTO\" means: tell the user to send #manualplan to end auto mode, then wait for them."
   elif [ "$fails" -ge 2 ]; then
