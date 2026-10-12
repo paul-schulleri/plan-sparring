@@ -177,6 +177,9 @@ auto_gate() {
   auto_done && return 0
   case "$tool" in Write|Edit|NotebookEdit)
     path=$(printf '%s' "$payload" | jq -r '.tool_input.file_path // .tool_input.notebook_path // ""' 2>/dev/null)
+    # Doubled slashes collapsed on both sides: the Write tool reports a normalised path, and a
+    # TMPDIR from elsewhere may still carry one.
+    while [[ $path == *//* ]]; do path=${path//\/\//\/}; done
     [ "$path" = "$plan" ] && return 0 ;;
   esac
 

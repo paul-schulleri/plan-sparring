@@ -14,7 +14,7 @@ export PLAN_SPARRING_BIN="$HERE/fake-backend"
 # The developer running the suite may have accounts configured for their own use. Inherited,
 # they would turn on the account question for every test that does not expect it and fail the
 # suite on a working plugin. Each account test sets the variable it needs explicitly.
-unset PLAN_SPARRING_ACCOUNTS
+unset PLAN_SPARRING_ACCOUNTS PLAN_SPARRING_AUTO_ACCOUNT PLAN_SPARRING_PLAN_CHECK   # the same goes for auto mode's
 # pgrep below searches every process on the machine, so the marker has to be unique to this run:
 # two suites in a row would otherwise trip over each other's hang.
 export PS_HANG_SECS="9$$"
@@ -849,6 +849,15 @@ check "nor does bash that rewrites the plan" "$(printf '%s' "$o" | decision)" "d
 [ -f "$DG/done" ] && bad "and nothing ends it on the side" || ok "and nothing ends it on the side"
 
 echo "== auto mode: review fixes =="
+# Field report: macOS TMPDIR ends in a slash, so the phase path read ".../T//plan-sparring/...",
+# while the Write tool hands the hook the normalised path. The plan file itself was then denied.
+TS="$TMPDIR/ts"; mkdir -p "$TS"
+o=$(TMPDIR="$TS/" upsp sS auto "$TG" "#autoplan s" | TMPDIR="$TS/" bash "$HOOK")
+hasnt "a trailing slash in TMPDIR does not double up in the plan path" "$o" "//plan-sparring"
+o=$(TMPDIR="$TS/" w sS "$TS/plan-sparring/auto-sS/plan.md" "$TG" | TMPDIR="$TS/" bash "$HOOK")
+check "and the normalised plan path may be written" "$o" ""
+o=$(TMPDIR="$TS/" w sS "$TS//plan-sparring//auto-sS/plan.md" "$TG" | TMPDIR="$TS/" bash "$HOOK")
+check "so may the same path with doubled slashes" "$o" ""
 # A runner still out for an older phase must not end a newer one by writing done into it.
 upsp sE auto "$TG" "#autoplan e" | bash "$HOOK" >/dev/null; DE=$(ps_auto_dir sE)
 echo "an id from the phase before" > "$DE/done"

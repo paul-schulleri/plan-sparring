@@ -69,7 +69,9 @@ PS_LABEL_STOP_AUTO="Stop auto mode"
 
 # --- state -------------------------------------------------------------------
 umask 077
-PS_ROOT="${TMPDIR:-/tmp}/plan-sparring"
+# macOS hands out TMPDIR with a trailing slash. Kept, it put "//" into every path this plugin prints,
+# and a path Claude is told to write never matched the normalised one the Write tool reports.
+PS_ROOT="${TMPDIR:-/tmp}"; PS_ROOT="${PS_ROOT%/}/plan-sparring"
 
 ps_sid() { printf '%s' "${1:-nosid}" | tr -cd 'A-Za-z0-9._-' | cut -c1-64; }
 ps_mode_file() { printf '%s/mode-%s' "$PS_ROOT" "$(ps_sid "$1")"; }
