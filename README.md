@@ -69,13 +69,14 @@ claude --plugin-dir /path/to/plan-sparring
 
 ## How it works
 
-Two hooks, one script, no changes to your `settings.json`.
+Three hook events, one script, no changes to your `settings.json`.
 
 | Hook | What it does |
 |---|---|
 | `UserPromptSubmit` | Notices the transition into plan mode, opens an *epoch*, and asks Claude to put the route question to you. Opens or ends an [auto mode](#auto-mode) phase on `#autoplan` / `#manualplan`. Silent on every other prompt. |
 | `PreToolUse` on `ExitPlanMode` | Decides whether the plan may be shown. |
 | `PreToolUse` on `Write`, `Edit`, `NotebookEdit`, `Bash`, `AskUserQuestion`, `EnterPlanMode` | Holds an auto mode plan phase. Silent when none is open. |
+| `SessionEnd` | Removes the session's review artifacts and state, unless `PLAN_SPARRING_KEEP` or `PLAN_SPARRING_OFF` is set. |
 
 An **epoch** is one planning round. It records where the transcript stood when the round began, so
 an answer you gave in an earlier round cannot authorise this one. It is deleted when you leave plan
@@ -102,8 +103,10 @@ On the *Spar* route the receipt is bound to the exact plan that was agreed to. C
 after agreement and the gate asks for another round — agreement is about text, not about having
 once run a review.
 
-The plan text never travels through a shell argument: `ExitPlanMode` hands the hook the full plan,
-the hook puts it on disk, and the runner reads it from there.
+The hook copies the plan file named by `ExitPlanMode`, falling back to the plan text in the hook
+payload when that file cannot be read. The runner reads this captured draft and passes the review
+prompt, including the plan, to the backend CLI as one command-line argument. It can therefore be
+visible to tools that can inspect process arguments.
 
 **Reviews end.** An adversarial reviewer at full effort will find something in any plan, forever,
 so two things bound it: the reviewer is told to raise only what would cause data loss, a crash, or
@@ -222,9 +225,10 @@ Read these before you rely on it.
 
 - **This is a workflow guard, not a security boundary.** The receipt is a file in your own temp
   directory. Anything running as you can write one.
-- **The receipt proves a review happened this round — not that the reviewer blessed the final
-  wording.** The plan is supposed to change after objections, so there is deliberately no hash
-  comparison against what you finally see.
+- **One review pass does not approve the final wording.** On that route the plan may change after
+  review without another hash check. The *Spar* route and auto mode bind agreement to the reviewed
+  plan's hash; editing it requires another review. In manual plan mode, you can instead explicitly
+  choose to present the plan as it stands or switch to *Straight from Claude*.
 - **A hard crash of the hook still fails open.** Claude Code treats a non-zero hook exit as
   non-blocking, so the gate can only deny when it runs far enough to say so. Missing dependencies
   and unreadable state are handled explicitly; a broken interpreter is not.
@@ -233,9 +237,11 @@ Read these before you rely on it.
   to the plugin. There is no hook on the toggle itself.
 - **The sparring routes send your plan to another vendor's model.** The route question says so.
   Review artifacts, including the plan text, live under `$TMPDIR/plan-sparring/` with mode 600
-  until the round ends. On the *Straight from Claude* route the plan is never written down at all.
-  A session that ends normally takes its round with it. A crash, a `kill`, or an end with
-  `PLAN_SPARRING_OFF` set leaves it for the OS instead.
+  until the round ends. On the *Straight from Claude* route this plugin captures no plan text;
+  artifacts from an earlier review in the same round remain until cleanup. A session that ends
+  normally takes its round with it unless `PLAN_SPARRING_KEEP` is set. A crash, a `kill`, or an end
+  with `PLAN_SPARRING_OFF` set also leaves artifacts behind. These cleanup rules cover the plugin's
+  files, not conversation history retained by the backend CLI or provider.
 - **A round does not survive the session it was started in.** Quit while planning and resume, and
   the route question comes back and the review starts from round one — the round ends when the
   session does, not when you come back to it.

@@ -351,9 +351,8 @@ PreToolUse)
     acct=$(ps_account_names)
   fi
 
-  # Only now, once a review is actually on the table. ExitPlanMode carries the full plan text, so
-  # it never travels through a shell argument - and the hash below covers exactly the bytes the
-  # runner will read. On the direct route nothing of the plan is written down at all.
+  # Capture only once a review is actually on the table. The hash below covers exactly the bytes
+  # the runner will read. On the direct route this plugin writes no plan text to disk.
   # select() matters: an empty plan string would still make jq -r emit a newline, and a
   # one-byte file counts as non-empty - the fallback below would never run.
   # The plan file first: it is what the user is shown and approves. tool_input.plan can be the

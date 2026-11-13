@@ -956,9 +956,11 @@ o=$(sh_ sO "$(printf '%q --epoch %q' "$ROOT/bin/plan-sparring-review" "$DO")" "$
 check "and the review may still be retried" "$o" ""
 
 # The number in the README is a fact about this file, so this file checks it. It drifted by 20
-# once already. Deliberately NOT via ok/bad: this check reads $pass and must not count itself.
-grep -q "^$pass assertions" "$ROOT/README.md" \
-  || { printf '  FAIL README assertion count is stale (now %s)\n' "$pass"; fail=$((fail+1)); }
+# once already. Count failed assertions too, so a test failure does not invent a README failure.
+# Deliberately NOT via ok/bad: this check must not count itself.
+total=$((pass + fail))
+grep -q "^$total assertions" "$ROOT/README.md" \
+  || { printf '  FAIL README assertion count is stale (now %s)\n' "$total"; fail=$((fail+1)); }
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

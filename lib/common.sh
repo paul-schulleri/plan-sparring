@@ -245,16 +245,17 @@ ps_delta() {
 # match. Left as literals on both sides on purpose - see the anchor reason above.
 ps_headlines() {
   [ -s "$1" ] || return 1
-  awk '
+  # The byte ranges below are invalid in some UTF-8 awk locales; parse them as bytes everywhere.
+  LC_ALL=C awk '
     /^[[:space:]]*SUMMARY BEGIN[[:space:]]*$/ { inblock = 1; next }
     inblock && /^[[:space:]]*SUMMARY END[[:space:]]*$/ { exit }
     !inblock { next }
     { gsub(/[[:cntrl:]]/, ""); sub(/^[[:space:]]*[-*][[:space:]]*/, ""); sub(/[[:space:]]+$/, "") }
     !length { next }
-    # Never end inside a character. Under a byte-counting awk (LC_CTYPE=C, the usual case here)
+    # Never end inside a character. Under byte-counting awk (LC_ALL=C above)
     # a plain cut lands mid-sequence and the digest shows a replacement character, so the
     # trailing continuation bytes go first and then a lead byte left dangling. Costs at most one
-    # whole character; a UTF-8-aware awk counts characters and neither sub matches.
+    # whole character.
     length > 110 {
       $0 = substr($0, 1, 110)
       sub(/[\200-\277]*$/, "", $0); sub(/[\300-\377]$/, "", $0)
