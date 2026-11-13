@@ -1,0 +1,61 @@
+name: History integrity
+
+on:
+  push:
+    branches: [main]
+  pull_request_target:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+
+permissions:
+  contents: read
+  statuses: write
+
+jobs:
+  history:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TARGET_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Mark the proposed commit as pending
+        run: >-
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$TARGET_SHA"
+          -f state=pending -f context=history-integrity
+          -f description='Checking commit ancestry and privacy'
+      # pull_request_target uses the trusted base workflow. Never check out or execute PR code.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Fetch proposed history without checking it out
+        run: git fetch --no-tags origin "$TARGET_SHA"
+      - name: Check ancestry and commit identities
+        shell: python
+        run: |
+          import hashlib
+          import os
+          import subprocess
+
+          target = os.environ["TARGET_SHA"]
+          def git(*args):
+              return subprocess.check_output(["git", *args]).decode().strip()
+
+          roots = git("rev-list", "--max-parents=0", target).splitlines()
+          if roots != ["5061dfcf953daab6d7ddcc4c4b087b82cc296eb4"]:
+              raise SystemExit("History predates the privacy rewrite or contains an unrelated root.")
+          # Keep the removed address out of the public repository and job output.
+          blocked = "411bd7c044a265215342a6e3d9f589b46181460fc1738b68e190510477078fac"
+          for email in git("log", "--format=%ae%n%ce", target).splitlines():
+              if hashlib.sha256(email.strip().lower().encode()).hexdigest() == blocked:
+                  raise SystemExit("A commit contains the removed email address. Rewrite it before merging.")
+          print("History integrity verified.")
+      - name: Publish the required status on the proposed commit
+        if: always()
+        env:
+          RESULT: ${{ job.status == 'success' && 'success' || 'failure' }}
+        run: >-
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$TARGET_SHA"
+          -f state="$RESULT" -f context=history-integrity
+          -f description='Commit ancestry and privacy check'
+          -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
